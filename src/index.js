@@ -35,8 +35,8 @@ app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" })); // Allows
 
 // 2. CORS Setup (Strict Origins & Credentials)
 app.use(cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
-    credentials: true, 
+    origin: ['http://localhost:5173', 'https://frontend-3yyv.onrender.com'], 
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
