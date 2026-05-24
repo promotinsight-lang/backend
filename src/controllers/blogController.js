@@ -22,7 +22,7 @@ const createBlog = async (req, res) => {
 
     let image_url = null;
     if (req.file) {
-      image_url = `http://localhost:5000/uploads/${req.file.filename}`;
+      image_url = `https://backend-6aiq.onrender.com/uploads/${req.file.filename}`;
     }
 
     const result = await pool.query(

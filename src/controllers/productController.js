@@ -69,7 +69,7 @@ const createProduct = async (req, res) => {
 
     let image_url = '';
     if (req.file) {
-      image_url = `http://localhost:5000/uploads/${req.file.filename}`;
+      image_url = `https://backend-6aiq.onrender.com/uploads/${req.file.filename}`;
     } else {
       return res.status(400).json({ success: false, message: "Product image file is required" });
     }
