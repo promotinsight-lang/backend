@@ -189,12 +189,17 @@ const sendRegistrationOtp = async (req, res) => {
     });
 
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // true for 465, false for other ports
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+  tls: {
+    rejectUnauthorized: false // This helps bypass certain strict SSL checks on cloud servers
+  }
+});
 
     const mailOptions = {
       from: `"MarketInsight Security" <${process.env.EMAIL_USER}>`,
