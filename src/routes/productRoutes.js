@@ -77,7 +77,7 @@ router.get("/refunds/all", protect, authorize("admin"), getAllRefunds);
 // ==========================
 // 🏪 Seller Routes (Static first)
 // ==========================
-router.post("/", protect, authorize("seller"), sellerActionLimiter, upload.single('image'), createProduct);
+router.post("/", protect, authorize("seller"), sellerActionLimiter, upload.none(), createProduct);
 router.get("/my", protect, authorize("seller"), getMyProducts);
 
 // ==========================

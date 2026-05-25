@@ -67,11 +67,11 @@ const createProduct = async (req, res) => {
       return res.status(400).json({ success: false, message: "Product name, store, keyword, link, country, and platform are required" });
     }
 
-    let image_url = '';
-    if (req.file) {
-      image_url = `https://backend-6aiq.onrender.com/uploads/${req.file.filename}`;
-    } else {
-      return res.status(400).json({ success: false, message: "Product image file is required" });
+  // Cloudinary থেকে পাওয়া URL টি সরাসরি req.body থেকে নেওয়া হচ্ছে
+    const image_url = req.body.image_url;
+    
+    if (!image_url) {
+      return res.status(400).json({ success: false, message: "Product image is required" });
     }
 
     const priceVal = parseAmount(price);
