@@ -202,14 +202,14 @@ const sendRegistrationOtp = async (req, res) => {
 });
 
     const mailOptions = {
-      from: `"MarketInsight Security" <${process.env.EMAIL_USER}>`,
+      from: `"PromotInsight Security" <${process.env.EMAIL_USER}>`,
       to: emailTrimmed,
       subject: "Your Registration Verification Code",
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
           <div style="background-color: #ffffff; padding: 30px; border-radius: 10px; max-width: 500px; margin: auto; border-top: 5px solid #0066ff;">
             <h2 style="color: #333; text-align: center;">Account Verification</h2>
-            <p style="color: #555; font-size: 16px;">Welcome to MarketInsight! Your email verification code is:</p>
+            <p style="color: #555; font-size: 16px;">Welcome to PromotInsight! Your email verification code is:</p>
             <div style="text-align: center; margin: 20px 0;">
               <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #0066ff; background: #f0f7ff; padding: 10px 20px; border-radius: 5px;">${otpCode}</span>
             </div>
@@ -837,7 +837,7 @@ const forgotPassword = async (req, res) => {
     const resetLink = `http://localhost:5173/reset-password/${user.id}/${token}`;
 
     const mailOptions = {
-      from: `"MarketInsight Security" <${process.env.EMAIL_USER}>`,
+      from: `"PromotInsight Security" <${process.env.EMAIL_USER}>`,
       to: user.email,
       subject: "Security Alert: Password Reset Request",
       html: `
