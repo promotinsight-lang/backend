@@ -448,7 +448,7 @@ const sellerApproveReview = async (req, res) => {
 };
 
 // ==========================================
-// 💰 Confirm Refund (Admin) - 🔥 PERCENTAGE REFUND LOGIC INTEGRATED
+// 💰 Confirm Refund (Admin) - 🔥 PERCENTAGE REFUND LOGIC & REFERRAL BONUS INTEGRATED
 // ==========================================
 const confirmRefund = async (req, res) => {
   const client = await pool.connect();
@@ -458,10 +458,12 @@ const confirmRefund = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 🔥 1. Fetch Application & Product details
+    // 🔥 1. Fetch Application & Product details (Added u.referred_by for referral check)
     const appResult = await client.query(
-      `SELECT a.user_id, a.status, p.price, p.reward, p.category, p.country, p.platform 
-       FROM applications a JOIN products p ON a.product_id = p.id 
+      `SELECT a.user_id, a.status, p.price, p.reward, p.category, p.country, p.platform, u.referred_by 
+       FROM applications a 
+       JOIN products p ON a.product_id = p.id 
+       JOIN users u ON a.user_id = u.id
        WHERE a.id = $1 FOR UPDATE`,
       [applicationId]
     );
@@ -501,7 +503,6 @@ const confirmRefund = async (req, res) => {
         [app.country, app.platform]
       );
       
-      // If config found, calculate fee percentage (e.g. 5.00 -> 0.05)
       const refundFeePercent = feeResult.rows.length > 0 ? (parseFloat(feeResult.rows[0].buyer_refund_fee) / 100) : 0;
       
       refundFeeAmount = totalGrossAmount * refundFeePercent;
@@ -530,6 +531,60 @@ const confirmRefund = async (req, res) => {
             [app.user_id, finalRefundAmount, `Refund received for Application #${applicationId} (Fee deducted: $${refundFeeAmount.toFixed(2)})`]
         );
     }
+
+    // ==========================================
+    // 🎁 REFERRAL BONUS LOGIC
+    // ==========================================
+    if (app.referred_by) {
+      // চেক করি এই ইউজারের (যে রিভিউ কমপ্লিট করলো) কয়টি অ্যাপ্লিকেশন completed হয়েছে
+      const referredUserAppsCount = await client.query(
+        `SELECT COUNT(*) FROM applications WHERE user_id = $1 AND status = 'completed'`,
+        [app.user_id]
+      );
+      
+      // যেহেতু এইমাত্র একটি completed হলো, তাই current count + 1 হবে
+      const completedAppsByReferredUser = parseInt(referredUserAppsCount.rows[0].count) + 1; 
+
+      if (completedAppsByReferredUser >= 5) {
+        // এবার চেক করি রেফারারের (যে ইনভাইট করেছিল) কয়টি অ্যাপ্লিকেশন completed হয়েছে
+        const referrerAppsCount = await client.query(
+          `SELECT COUNT(*) FROM applications WHERE user_id = $1 AND status = 'completed'`,
+          [app.referred_by]
+        );
+        const completedAppsByReferrer = parseInt(referrerAppsCount.rows[0].count);
+
+        if (completedAppsByReferrer >= 5) {
+          // চেক করি রেফারেল বোনাস ইতিমধ্যে দেওয়া হয়েছে কিনা
+          const referralCheck = await client.query(
+            `SELECT status FROM referrals WHERE referrer_id = $1 AND referred_id = $2 FOR UPDATE`,
+            [app.referred_by, app.user_id]
+          );
+
+          if (referralCheck.rows.length > 0 && referralCheck.rows[0].status === 'pending') {
+            const rewardAmount = 10; // Fixed $10 bonus
+
+            // ১. রেফারারের ওয়ালেটে ১০ ডলার যোগ করা
+            await client.query(
+              `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
+              [rewardAmount, app.referred_by]
+            );
+
+            // ২. referrals টেবিলের স্ট্যাটাস আপডেট করা
+            await client.query(
+              `UPDATE referrals SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE referrer_id = $1 AND referred_id = $2`,
+              [app.referred_by, app.user_id]
+            );
+
+            // ৩. ট্রানজেকশন লগ রাখা
+            await client.query(
+              `INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'referral_bonus', 'Referral bonus for user completing 5 orders', 'completed')`,
+              [app.referred_by, rewardAmount]
+            );
+          }
+        }
+      }
+    }
+    // ==========================================
 
     await client.query('COMMIT');
     res.status(200).json({ success: true, message: message, data: updateResult.rows[0] });

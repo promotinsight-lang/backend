@@ -85,6 +85,13 @@ const maskEmail = (email) => {
   return `${name.substring(0, 2)}***${name[name.length - 1]}@${domain}`;
 };
 
+// 🔥 NEW: Referral Code Generator Helper
+const generateReferralCode = (name) => {
+  const prefix = name ? name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X') : 'USR';
+  const randomString = crypto.randomBytes(3).toString('hex').toUpperCase();
+  return `${prefix}${randomString}`;
+};
+
 // ==========================================
 // 📈 GET PUBLIC LIVE FEED
 // ==========================================
@@ -189,17 +196,17 @@ const sendRegistrationOtp = async (req, res) => {
     });
 
     const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 465,
-  secure: true, // true for 465, false for other ports
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false // This helps bypass certain strict SSL checks on cloud servers
-  }
-});
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true, 
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      tls: {
+        rejectUnauthorized: false 
+      }
+    });
 
     const mailOptions = {
       from: `"PromotInsight Security" <${process.env.EMAIL_USER}>`,
@@ -229,11 +236,11 @@ const sendRegistrationOtp = async (req, res) => {
 };
 
 // =======================
-// ✅ Register User
+// ✅ Register User (Updated with Referral Logic)
 // =======================
 const registerUser = async (req, res) => {
   try {
-    const { name, fullName, email, password, role, otp } = req.body;
+    const { name, fullName, email, password, role, otp, referred_by_code } = req.body;
     const finalName = name ? name.trim() : (fullName ? fullName.trim() : '');
     const emailTrimmed = email ? email.trim().toLowerCase() : '';
     
@@ -278,16 +285,35 @@ const registerUser = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // 🔥 Add IP and Location to insertion
+    // 🔥 Referral Logic: Check if referred_by_code is valid
+    let referredById = null;
+    if (referred_by_code) {
+      const referrerRes = await pool.query("SELECT id FROM users WHERE referral_code = $1", [referred_by_code.trim()]);
+      if (referrerRes.rows.length > 0) {
+        referredById = referrerRes.rows[0].id;
+      }
+    }
+
+    // 🔥 Generate Referral Code for the new user
+    const newReferralCode = generateReferralCode(finalName);
+
+    // 🔥 Add IP, Location, Referral Code, and Referrer ID to insertion
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING id, name, email, role, verification_status`,
-      [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation]
+      [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById]
     );
 
     const user = result.rows[0];
     otpCache.delete(emailTrimmed);
+
+    // 🔥 Insert into referrals table if user was referred
+    if (referredById) {
+      await pool.query(
+        `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', 10)`
+      , [referredById, user.id]);
+    }
 
     const token = jwt.sign(
       { id: user.id, role: user.role },
@@ -386,11 +412,11 @@ const loginUser = async (req, res) => {
 };
 
 // =======================
-// 🌐 Social Login (Google & Yahoo)
+// 🌐 Social Login (Google & Yahoo) - Updated with Referral Logic
 // =======================
 const socialLogin = async (req, res) => {
   try {
-    const { email, name, auth_provider } = req.body;
+    const { email, name, auth_provider, referred_by_code } = req.body;
     
     // 🔥 Track IP and Location on Social Login
     const ipAddress = getClientIp(req); 
@@ -418,15 +444,33 @@ const socialLogin = async (req, res) => {
       const hashedPassword = await bcrypt.hash(randomPassword, 12);
       const finalName = name ? name.trim() : 'User';
 
-      // 🔥 Insert IP and Location for new social login user
+      // 🔥 Referral Logic for Social Login
+      let referredById = null;
+      if (referred_by_code) {
+        const referrerRes = await pool.query("SELECT id FROM users WHERE referral_code = $1", [referred_by_code.trim()]);
+        if (referrerRes.rows.length > 0) {
+          referredById = referrerRes.rows[0].id;
+        }
+      }
+
+      const newReferralCode = generateReferralCode(finalName);
+
+      // 🔥 Insert IP, Location, and Referral Data for new social login user
       const newUser = await pool.query(
-        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location)
-         VALUES ($1, $2, $3, 'buyer', $4, $5)
+        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by)
+         VALUES ($1, $2, $3, 'buyer', $4, $5, $6, $7)
          RETURNING id, name, email, role, verification_status`,
-        [finalName, emailTrimmed, hashedPassword, ipAddress, ipLocation]
+        [finalName, emailTrimmed, hashedPassword, ipAddress, ipLocation, newReferralCode, referredById]
       );
       
       user = newUser.rows[0];
+
+      // 🔥 Insert into referrals table if user was referred
+      if (referredById) {
+        await pool.query(
+          `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', 10)`
+        , [referredById, user.id]);
+      }
     }
 
     const token = jwt.sign(
@@ -463,17 +507,18 @@ const logoutUser = (req, res) => {
 };
 
 // ==========================================
-// 👤 Get User Profile
+// 👤 Get User Profile (Updated to fetch Referral Code)
 // ==========================================
 const getUserProfile = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    // 🔥 Added referral_code to selection
     const result = await pool.query(
       `SELECT id, name, email, role, wallet_balance, created_at, 
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
-              whatsapp_account, telegram_account, is_active, is_frozen
+              whatsapp_account, telegram_account, is_active, is_frozen, referral_code
        FROM users WHERE id = $1`,
       [userId]
     );
