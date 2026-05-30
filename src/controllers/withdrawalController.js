@@ -25,15 +25,16 @@ const requestWithdrawal = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    const currentBalance = parseFloat(userResult.rows[0].wallet_balance);
+    // 🔥 CRITICAL BUG FIX: NULL থাকলে 0 ধরে নিতে হবে, নাহলে parseFloat(null) = NaN হয়ে সিকিউরিটি বাইপাস হয়ে যাবে
+    const currentBalance = parseFloat(userResult.rows[0].wallet_balance || 0);
 
+    // ব্যালেন্স চেক
     if (currentBalance < amountValue) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: "Insufficient wallet balance" });
+      return res.status(400).json({ success: false, message: "Insufficient wallet balance. You cannot withdraw more than you have." });
     }
 
     // 🔥 2. DYNAMIC WITHDRAWAL FEE CALCULATION (%)
-    // Since withdrawal is global, we fetch the first available withdrawal fee config.
     const feeConfig = await client.query("SELECT seller_withdrawal_fee FROM dynamic_fees_config LIMIT 1");
     let feePercent = 0.0; // Default 0%
     
@@ -44,9 +45,9 @@ const requestWithdrawal = async (req, res) => {
     const feeAmount = amountValue * feePercent;
     const netPayable = amountValue - feeAmount;
 
-    // 3. Deduct total requested amount from wallet
+    // 3. Deduct total requested amount from wallet (🔥 COALESCE added for extra DB safety)
     await client.query(
-      "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
+      "UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) - $1 WHERE id = $2",
       [amountValue, userId]
     );
 
@@ -218,9 +219,9 @@ const rejectWithdrawal = async (req, res) => {
       [withdrawalId]
     );
 
-    // 2. Refund money back to user's wallet safely
+    // 2. Refund money back to user's wallet safely (🔥 COALESCE added for extra DB safety)
     await client.query(
-      "UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2",
+      "UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2",
       [withdrawal.amount, withdrawal.user_id]
     );
 
