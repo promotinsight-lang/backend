@@ -10,14 +10,15 @@ const upsertFeeConfig = async (req, res) => {
             buyer_reward = 0, 
             buyer_refund_fee = 0, 
             seller_deposit_fee = 0, 
-            seller_withdrawal_fee = 0 
+            seller_withdrawal_fee = 0,
+            exchange_rate = 1 // 🔥 NEW: Exchange Rate for local currency to USD calculation
         } = req.body;
 
         if (!country || !platform) {
             return res.status(400).json({ success: false, message: 'Country and Platform are required fields.' });
         }
 
-        // 🔥 NEW LOGIC: Ensure platform_charge is correctly formatted as a JSON string for database storage
+        // 🔥 LOGIC: Ensure platform_charge is correctly formatted as a JSON string for database storage
         let processedPlatformCharge = platform_charge;
         if (typeof platform_charge === 'object') {
             processedPlatformCharge = JSON.stringify(platform_charge);
@@ -26,12 +27,13 @@ const upsertFeeConfig = async (req, res) => {
             processedPlatformCharge = JSON.stringify([{ min: 0, max: 0, fee: 0 }]); 
         }
 
+        // UPSERT Query with exchange_rate
         const query = `
             INSERT INTO dynamic_fees_config (
                 country, platform, platform_charge, buyer_reward, 
-                buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee
+                buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee, exchange_rate
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             ON CONFLICT (country, platform) 
             DO UPDATE SET 
                 platform_charge = EXCLUDED.platform_charge,
@@ -39,6 +41,7 @@ const upsertFeeConfig = async (req, res) => {
                 buyer_refund_fee = EXCLUDED.buyer_refund_fee,
                 seller_deposit_fee = EXCLUDED.seller_deposit_fee,
                 seller_withdrawal_fee = EXCLUDED.seller_withdrawal_fee,
+                exchange_rate = EXCLUDED.exchange_rate,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *;
         `;
@@ -50,7 +53,8 @@ const upsertFeeConfig = async (req, res) => {
             buyer_reward,
             buyer_refund_fee, 
             seller_deposit_fee, 
-            seller_withdrawal_fee
+            seller_withdrawal_fee,
+            exchange_rate
         ];
 
         const result = await pool.query(query, values);
@@ -79,7 +83,6 @@ const getFeeConfig = async (req, res) => {
         const query = `SELECT * FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)`;
         const result = await pool.query(query, [country.trim(), platform.trim()]);
 
-        // 🔥 FIXED: 404 এর বদলে 200 রিটার্ন করা হলো null ডেটা সহ। এর ফলে ব্রাউজার কনসোলে আর লাল এরর আসবে না।
         if (result.rows.length === 0) {
             return res.status(200).json({ success: true, data: null, message: 'No configuration found.' });
         }

@@ -11,9 +11,9 @@ const parseQuantity = (value) => {
 };
 
 const fetchFeeConfig = async (client, country, platform) => {
-  // 🔥 UPDATED: Added buyer_refund_fee to the query
+  // 🔥 FETCH EXCHANGE RATE ALONG WITH FEES
   const result = await client.query(
-    `SELECT country, platform, platform_charge, buyer_reward, buyer_refund_fee
+    `SELECT country, platform, platform_charge, buyer_reward, buyer_refund_fee, exchange_rate
      FROM dynamic_fees_config
      WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)`,
     [country.trim(), platform.trim()]
@@ -26,14 +26,12 @@ const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, useConfi
   const fixedBuyerReward = parseAmount(feeConfig.buyer_reward);
   const resolvedReward = useConfiguredBuyerReward && fixedBuyerReward > 0 ? fixedBuyerReward : reward;
   
-  // 🔥 NEW LOGIC 1: Dynamic Tier-based Fixed Fee Calculation (JSON Array parsing)
-  let commissionPerOrder = 0;
+  let commissionPerOrderLocal = 0;
   let hasFeeError = false;
   let feeErrorMessage = "";
 
+  // 🔥 JSON TIER PARSING LOGIC
   let platformChargeTiers = feeConfig.platform_charge;
-  
-  // Parse JSON string if needed
   if (typeof platformChargeTiers === 'string') {
       try { 
           platformChargeTiers = JSON.parse(platformChargeTiers); 
@@ -43,38 +41,39 @@ const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, useConfi
   }
 
   if (Array.isArray(platformChargeTiers) && platformChargeTiers.length > 0) {
-      // Find the specific tier where the price falls between min and max
       const matchedTier = platformChargeTiers.find(t => price >= Number(t.min) && price <= Number(t.max));
-      
       if (matchedTier) {
-          commissionPerOrder = Number(matchedTier.fee); // Fixed fee instead of percentage
+          commissionPerOrderLocal = Number(matchedTier.fee);
       } else {
           hasFeeError = true;
-          feeErrorMessage = `Product price ($${price}) does not fall into any defined fixed fee tier for this platform.`;
+          feeErrorMessage = `Product price does not fall into any defined fee tier for this platform.`;
       }
   } else {
-      // Fallback logic just in case it's still using old percentage format
       const platformChargePercent = parseAmount(feeConfig.platform_charge) / 100;
-      commissionPerOrder = price * (Number.isNaN(platformChargePercent) ? 0.10 : platformChargePercent);
+      commissionPerOrderLocal = price * (Number.isNaN(platformChargePercent) ? 0.10 : platformChargePercent);
   }
 
-  // 🔥 NEW LOGIC 2: Refund fee applies on (Product Price + Buyer Reward)
   const refundFeePercent = parseAmount(feeConfig.buyer_refund_fee || 0) / 100;
-  const costPerOrder = price + resolvedReward;
-  const refundFeePerOrder = costPerOrder * refundFeePercent;
+  const costPerOrderLocal = price + resolvedReward;
+  const refundFeePerOrderLocal = costPerOrderLocal * refundFeePercent;
 
-  // Total required deposit now properly accounts for base cost + platform commission (fixed tier) + upfront refund fee
-  const requiredDepositPerOrder = costPerOrder + commissionPerOrder + refundFeePerOrder;
-  const totalRequiredDeposit = requiredDepositPerOrder * quantity;
+  // 🔥 LOCAL CURRENCY DEPOSIT
+  const requiredDepositPerOrderLocal = costPerOrderLocal + commissionPerOrderLocal + refundFeePerOrderLocal;
+  const totalRequiredDepositLocal = requiredDepositPerOrderLocal * quantity;
+
+  // 🔥 USD CONVERSION (For Wallet Deduction)
+  const exchangeRate = parseFloat(feeConfig.exchange_rate) || 1.0;
+  const totalRequiredDepositUSD = totalRequiredDepositLocal / exchangeRate;
 
   return {
     resolvedReward,
-    commissionPerOrder,
+    commissionPerOrderLocal,
     refundFeePercent,
-    costPerOrder,
-    refundFeePerOrder,
-    requiredDepositPerOrder,
-    totalRequiredDeposit,
+    costPerOrderLocal,
+    refundFeePerOrderLocal,
+    totalRequiredDepositLocal,
+    totalRequiredDepositUSD,
+    exchangeRate,
     hasFeeError,
     feeErrorMessage
   };
@@ -95,9 +94,7 @@ const createProduct = async (req, res) => {
       return res.status(400).json({ success: false, message: "Product name, store, keyword, link, country, and platform are required" });
     }
 
-  // Cloudinary থেকে পাওয়া URL টি সরাসরি req.body থেকে নেওয়া হচ্ছে
     const image_url = req.body.image_url;
-    
     if (!image_url) {
       return res.status(400).json({ success: false, message: "Product image is required" });
     }
@@ -112,7 +109,6 @@ const createProduct = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 🔥 DYNAMIC FEE FETCH: Fetch platform charge for the selected country and platform
     const feeConfig = await fetchFeeConfig(client, safeCountry, safePlatform);
     if (!feeConfig) {
       await client.query('ROLLBACK');
@@ -122,7 +118,14 @@ const createProduct = async (req, res) => {
       });
     }
 
-    const { resolvedReward, totalRequiredDeposit, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
+    const { 
+        resolvedReward, 
+        totalRequiredDepositLocal, 
+        totalRequiredDepositUSD, 
+        exchangeRate, 
+        hasFeeError, 
+        feeErrorMessage 
+    } = calculateCampaignDeposit({
       price: priceVal,
       reward: rewardVal,
       quantity: qtyVal,
@@ -135,7 +138,6 @@ const createProduct = async (req, res) => {
       return res.status(400).json({ success: false, message: feeErrorMessage });
     }
 
-    // Row-level lock on user to check balance securely
     const userResult = await client.query("SELECT wallet_balance FROM users WHERE id = $1 FOR UPDATE", [sellerId]);
     if (userResult.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -144,48 +146,46 @@ const createProduct = async (req, res) => {
 
     const currentBalance = parseFloat(userResult.rows[0].wallet_balance) || 0;
 
-    if (currentBalance < totalRequiredDeposit) {
+    // 🔥 CHECK BALANCE IN USD
+    if (currentBalance < totalRequiredDepositUSD) {
       await client.query('ROLLBACK');
       return res.status(400).json({ 
         success: false,
-        message: `Insufficient balance. You need a deposit of $${totalRequiredDeposit.toFixed(2)} to list this product.` 
+        message: `Insufficient USD balance. You need $${totalRequiredDepositUSD.toFixed(2)} USD (Equivalent to ${totalRequiredDepositLocal.toFixed(2)} local currency) to list this product.` 
       });
     }
 
-    // Deduct Balance
+    // 🔥 DEDUCT BALANCE IN USD
     await client.query(
       "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
-      [totalRequiredDeposit, sellerId]
+      [totalRequiredDepositUSD, sellerId]
     );
 
-    // Insert Product (Sanitizing strings where needed)
+    // Insert Product (We save local deposit in DB for ledger tracking)
     const result = await client.query(
       `INSERT INTO products 
-      (image_url, product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, seller_id, platform, category, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')
+      (image_url, product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, seller_id, platform, category, status, total_deposit)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending', $14)
       RETURNING *`,
       [
-        image_url, 
-        product_name.trim(), 
-        priceVal, 
-        store_name.trim(), 
-        search_keyword.trim(), 
-        resolvedReward, 
-        product_link.trim(), 
-        safeCountry, 
-        qtyVal, 
-        instructions ? instructions.trim() : '', 
-        sellerId, 
-        safePlatform, 
-        category ? category.trim() : 'General'
+        image_url, product_name.trim(), priceVal, store_name.trim(), search_keyword.trim(), 
+        resolvedReward, product_link.trim(), safeCountry, qtyVal, 
+        instructions ? instructions.trim() : '', sellerId, safePlatform, 
+        category ? category.trim() : 'General', totalRequiredDepositLocal
       ]
+    );
+
+    // 🔥 LOG TRANSACTION IN USD
+    await client.query(
+      "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'product_deposit', $3, 'completed')",
+      [sellerId, totalRequiredDepositUSD, `Deposit held for campaign: ${product_name} (Ex. Rate: ${exchangeRate})`]
     );
 
     await client.query('COMMIT');
 
     res.status(201).json({ 
       success: true,
-      message: "Product created successfully. Deposit deducted from wallet.", 
+      message: "Product created successfully. USD Deposit deducted from wallet.", 
       product: result.rows[0] 
     });
 
@@ -199,7 +199,7 @@ const createProduct = async (req, res) => {
 };
 
 // =======================
-// ❌ CANCEL PRODUCT & REFUND (Seller) - 🔥 SECURED & DYNAMIC REFUND
+// ❌ CANCEL PRODUCT & REFUND (Seller)
 // =======================
 const cancelProduct = async (req, res) => {
   const client = await pool.connect();
@@ -209,7 +209,6 @@ const cancelProduct = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Lock product row
     const prodCheck = await client.query("SELECT * FROM products WHERE id = $1 AND seller_id = $2 FOR UPDATE", [productId, sellerId]);
     if (prodCheck.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -227,7 +226,6 @@ const cancelProduct = async (req, res) => {
     const rewardVal = parseAmount(product.reward);
     const qtyVal = parseQuantity(product.required_orders);
     
-    // 🔥 DYNAMIC FEE FETCH FOR ACCURATE REFUND
     const feeConfig = await fetchFeeConfig(client, product.country, product.platform);
     if (!feeConfig) {
       await client.query('ROLLBACK');
@@ -237,7 +235,7 @@ const cancelProduct = async (req, res) => {
       });
     }
 
-    const { totalRequiredDeposit: refundAmount, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
+    const { totalRequiredDepositUSD: refundAmountUSD, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
       price: priceVal,
       reward: rewardVal,
       quantity: qtyVal,
@@ -249,26 +247,24 @@ const cancelProduct = async (req, res) => {
       return res.status(400).json({ success: false, message: feeErrorMessage });
     }
 
-    // Refund wallet
+    // Refund wallet in USD
     await client.query(
       "UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2",
-      [refundAmount, sellerId]
+      [refundAmountUSD, sellerId]
     );
 
-    // 🔥 SECURITY FIX: Log transaction
     await client.query(
       "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
-      [sellerId, refundAmount, `Refund for self-cancelled product: ${product.product_name} (ID: ${product.id})`]
+      [sellerId, refundAmountUSD, `Refund for self-cancelled product: ${product.product_name} (ID: ${product.id})`]
     );
 
-    // Delete product
     await client.query("DELETE FROM products WHERE id = $1", [productId]);
 
     await client.query('COMMIT');
 
     res.status(200).json({ 
       success: true, 
-      message: `Product cancelled successfully. $${refundAmount.toFixed(2)} has been refunded to your wallet.` 
+      message: `Product cancelled successfully. $${refundAmountUSD.toFixed(2)} USD has been refunded to your wallet.` 
     });
 
   } catch (error) {
@@ -316,15 +312,8 @@ const editProduct = async (req, res) => {
        SET product_name = $1, product_link = $2, store_name = $3, search_keyword = $4, country = $5, instructions = $6, platform = $7, category = $8
        WHERE id = $9 RETURNING *`,
       [
-        product_name.trim(), 
-        product_link.trim(), 
-        store_name.trim(), 
-        search_keyword.trim(), 
-        safeCountry, 
-        instructions ? instructions.trim() : '', 
-        safePlatform, 
-        category ? category.trim() : 'General', 
-        productId
+        product_name.trim(), product_link.trim(), store_name.trim(), search_keyword.trim(), 
+        safeCountry, instructions ? instructions.trim() : '', safePlatform, category ? category.trim() : 'General', productId
       ]
     );
 
@@ -383,10 +372,7 @@ const getProducts = async (req, res) => {
 const approveProduct = async (req, res) => {
   try {
     const productId = req.params.id;
-    const result = await pool.query(
-      `UPDATE products SET status = 'approved' WHERE id = $1 RETURNING *`,
-      [productId]
-    );
+    const result = await pool.query(`UPDATE products SET status = 'approved' WHERE id = $1 RETURNING *`, [productId]);
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
     res.json({ success: true, message: "Product approved successfully", product: result.rows[0] });
   } catch (error) {
@@ -400,10 +386,7 @@ const approveProduct = async (req, res) => {
 const stopProductAdmin = async (req, res) => {
   try {
     const productId = req.params.id;
-    const result = await pool.query(
-      `UPDATE products SET status = 'stopped' WHERE id = $1 RETURNING *`,
-      [productId]
-    );
+    const result = await pool.query(`UPDATE products SET status = 'stopped' WHERE id = $1 RETURNING *`, [productId]);
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
     res.json({ success: true, message: "Product stopped. It will now appear as Sold Out.", product: result.rows[0] });
   } catch (error) {
@@ -417,10 +400,7 @@ const stopProductAdmin = async (req, res) => {
 const resumeProductAdmin = async (req, res) => {
   try {
     const productId = req.params.id;
-    const result = await pool.query(
-      `UPDATE products SET status = 'approved' WHERE id = $1 RETURNING *`,
-      [productId]
-    );
+    const result = await pool.query(`UPDATE products SET status = 'approved' WHERE id = $1 RETURNING *`, [productId]);
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Product not found" });
     res.json({ success: true, message: "Product resumed successfully.", product: result.rows[0] });
   } catch (error) {
@@ -429,7 +409,7 @@ const resumeProductAdmin = async (req, res) => {
 };
 
 // =======================
-// ❌ REJECT PRODUCT (Admin) - 🔥 DYNAMIC REFUND SECURED
+// ❌ REJECT PRODUCT (Admin)
 // =======================
 const rejectProductAdmin = async (req, res) => {
   const client = await pool.connect();
@@ -438,7 +418,6 @@ const rejectProductAdmin = async (req, res) => {
     
     await client.query('BEGIN');
 
-    // Lock product row to prevent double rejection/cancellation
     const prodCheck = await client.query("SELECT * FROM products WHERE id = $1 FOR UPDATE", [productId]);
     if (prodCheck.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -447,7 +426,6 @@ const rejectProductAdmin = async (req, res) => {
 
     const product = prodCheck.rows[0];
     
-    // Allow rejection for both pending and stopped products
     if(product.status !== 'pending' && product.status !== 'stopped'){
         await client.query('ROLLBACK');
         return res.status(400).json({ success: false, message: "Only pending or stopped products can be rejected and refunded." });
@@ -457,7 +435,6 @@ const rejectProductAdmin = async (req, res) => {
     const rewardVal = parseAmount(product.reward);
     const qtyVal = parseQuantity(product.required_orders);
     
-    // 🔥 DYNAMIC FEE FETCH FOR ACCURATE ADMIN REFUND
     const feeConfig = await fetchFeeConfig(client, product.country, product.platform);
     if (!feeConfig) {
         await client.query('ROLLBACK');
@@ -467,17 +444,15 @@ const rejectProductAdmin = async (req, res) => {
         });
     }
 
-    // Smart Refund Logic: Check how many applications are already submitted
     const appCheck = await client.query("SELECT COUNT(*) FROM applications WHERE product_id = $1 AND status != 'rejected'", [productId]);
     const usedQty = parseInt(appCheck.rows[0].count) || 0;
     
-    // If pending, full refund. If stopped, refund only unused quota
     let remainingQty = qtyVal;
     if (product.status === 'stopped') {
         remainingQty = Math.max(0, qtyVal - usedQty);
     }
     
-    const { totalRequiredDeposit: refundAmount, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
+    const { totalRequiredDepositUSD: refundAmountUSD, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
         price: priceVal,
         reward: rewardVal,
         quantity: remainingQty,
@@ -489,25 +464,23 @@ const rejectProductAdmin = async (req, res) => {
         return res.status(400).json({ success: false, message: feeErrorMessage });
     }
 
-    // Refund the wallet ONLY if there is remaining money
-    if (refundAmount > 0) {
-        await client.query("UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2", [refundAmount, product.seller_id]);
+    // Refund the wallet ONLY if there is remaining money (Refund in USD)
+    if (refundAmountUSD > 0) {
+        await client.query("UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2", [refundAmountUSD, product.seller_id]);
         
-        // 🔥 SECURITY FIX: Log Admin-initiated refund
         await client.query(
             "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
-            [product.seller_id, refundAmount, `Admin refund for deleted/rejected product: ${product.product_name} (ID: ${product.id})`]
+            [product.seller_id, refundAmountUSD, `Admin refund for deleted/rejected product: ${product.product_name} (ID: ${product.id})`]
         );
     }
     
-    // 🔥 SOFT DELETE: Update status instead of Hard Delete
     await client.query("UPDATE products SET status = 'rejected' WHERE id = $1", [productId]);
 
     await client.query('COMMIT');
 
     res.status(200).json({ 
         success: true, 
-        message: `Product deleted & $${refundAmount.toFixed(2)} refunded to seller for ${remainingQty} unused slots.` 
+        message: `Product deleted & $${refundAmountUSD.toFixed(2)} USD refunded to seller for ${remainingQty} unused slots.` 
     });
   } catch (error) {
     await client.query('ROLLBACK');
