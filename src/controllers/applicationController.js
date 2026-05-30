@@ -448,7 +448,7 @@ const sellerApproveReview = async (req, res) => {
 };
 
 // ==========================================
-// 💰 Confirm Refund (Admin) - 🔥 PERCENTAGE REFUND LOGIC & REFERRAL BONUS INTEGRATED
+// 💰 Confirm Refund (Admin) - 🔥 CRITICAL BUG FIX (COALESCE WALLET BALANCE)
 // ==========================================
 const confirmRefund = async (req, res) => {
   const client = await pool.connect();
@@ -458,7 +458,7 @@ const confirmRefund = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 🔥 1. Fetch Application & Product details (Added u.referred_by for referral check)
+    // Fetch Application & Product details
     const appResult = await client.query(
       `SELECT a.user_id, a.status, p.price, p.reward, p.category, p.country, p.platform, u.referred_by 
        FROM applications a 
@@ -491,25 +491,29 @@ const confirmRefund = async (req, res) => {
        });
     }
 
-    const totalGrossAmount = parseFloat(app.price) + parseFloat(app.reward);
+    // 🔥 NaN এরর ঠেকানোর জন্য Safe Parsing
+    const safePrice = parseFloat(app.price) || 0;
+    const safeReward = parseFloat(app.reward) || 0;
+    const totalGrossAmount = safePrice + safeReward;
+    
     let finalRefundAmount = totalGrossAmount;
     let refundFeeAmount = 0;
     let message = "";
 
     if (app.category !== 'Pre-Pay') {
-      // 🔥 2. FETCH DYNAMIC REFUND FEE PERCENTAGE
       const feeResult = await client.query(
         "SELECT buyer_refund_fee FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)",
         [app.country, app.platform]
       );
       
-      const refundFeePercent = feeResult.rows.length > 0 ? (parseFloat(feeResult.rows[0].buyer_refund_fee) / 100) : 0;
+      const feeStr = feeResult.rows.length > 0 ? feeResult.rows[0].buyer_refund_fee : 0;
+      const refundFeePercent = parseFloat(feeStr || 0) / 100;
       
       refundFeeAmount = totalGrossAmount * refundFeePercent;
       finalRefundAmount = totalGrossAmount - refundFeeAmount;
 
-      // 3. Update User Wallet with Final Net Amount
-      await client.query(`UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`, [finalRefundAmount, app.user_id]);
+      // 🔥 CRITICAL FIX: COALESCE(wallet_balance, 0) ব্যবহার করা হয়েছে যেন NULL থাকলে 0 ধরে নেয়
+      await client.query(`UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2`, [finalRefundAmount, app.user_id]);
       
       message = `Refund confirmed successfully. $${finalRefundAmount.toFixed(2)} added to buyer's wallet. (Network Fee: $${refundFeeAmount.toFixed(2)} deducted)`;
     } else {
@@ -518,13 +522,11 @@ const confirmRefund = async (req, res) => {
 
     const finalOrderText = refund_order_number ? escapeHTML(refund_order_number.trim()) : (refund_screenshot_url ? escapeHTML(refund_screenshot_url.trim()) : '');
 
-    // 4. Log the refund
     const updateResult = await client.query(
       `UPDATE applications SET status = 'completed', refund_screenshot_url = $1, refund_comment = $2 WHERE id = $3 RETURNING *`,
       [finalOrderText, refund_comment ? escapeHTML(refund_comment.trim()) : null, applicationId]
     );
 
-    // 🔥 SECURITY FIX: Log transaction for the buyer
     if (app.category !== 'Pre-Pay') {
         await client.query(
             "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
@@ -536,17 +538,14 @@ const confirmRefund = async (req, res) => {
     // 🎁 REFERRAL BONUS LOGIC
     // ==========================================
     if (app.referred_by) {
-      // চেক করি এই ইউজারের (যে রিভিউ কমপ্লিট করলো) কয়টি অ্যাপ্লিকেশন completed হয়েছে
       const referredUserAppsCount = await client.query(
         `SELECT COUNT(*) FROM applications WHERE user_id = $1 AND status = 'completed'`,
         [app.user_id]
       );
       
-      // যেহেতু এইমাত্র একটি completed হলো, তাই current count + 1 হবে
       const completedAppsByReferredUser = parseInt(referredUserAppsCount.rows[0].count) + 1; 
 
       if (completedAppsByReferredUser >= 5) {
-        // এবার চেক করি রেফারারের (যে ইনভাইট করেছিল) কয়টি অ্যাপ্লিকেশন completed হয়েছে
         const referrerAppsCount = await client.query(
           `SELECT COUNT(*) FROM applications WHERE user_id = $1 AND status = 'completed'`,
           [app.referred_by]
@@ -554,28 +553,25 @@ const confirmRefund = async (req, res) => {
         const completedAppsByReferrer = parseInt(referrerAppsCount.rows[0].count);
 
         if (completedAppsByReferrer >= 5) {
-          // চেক করি রেফারেল বোনাস ইতিমধ্যে দেওয়া হয়েছে কিনা
           const referralCheck = await client.query(
             `SELECT status FROM referrals WHERE referrer_id = $1 AND referred_id = $2 FOR UPDATE`,
             [app.referred_by, app.user_id]
           );
 
           if (referralCheck.rows.length > 0 && referralCheck.rows[0].status === 'pending') {
-            const rewardAmount = 10; // Fixed $10 bonus
+            const rewardAmount = 10;
 
-            // ১. রেফারারের ওয়ালেটে ১০ ডলার যোগ করা
+            // 🔥 CRITICAL FIX: COALESCE(wallet_balance, 0)
             await client.query(
-              `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`,
+              `UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2`,
               [rewardAmount, app.referred_by]
             );
 
-            // ২. referrals টেবিলের স্ট্যাটাস আপডেট করা
             await client.query(
               `UPDATE referrals SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE referrer_id = $1 AND referred_id = $2`,
               [app.referred_by, app.user_id]
             );
 
-            // ৩. ট্রানজেকশন লগ রাখা
             await client.query(
               `INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'referral_bonus', 'Referral bonus for user completing 5 orders', 'completed')`,
               [app.referred_by, rewardAmount]
@@ -584,7 +580,6 @@ const confirmRefund = async (req, res) => {
         }
       }
     }
-    // ==========================================
 
     await client.query('COMMIT');
     res.status(200).json({ success: true, message: message, data: updateResult.rows[0] });
