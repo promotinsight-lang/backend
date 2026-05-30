@@ -124,7 +124,8 @@ const createProduct = async (req, res) => {
         totalRequiredDepositUSD, 
         exchangeRate, 
         hasFeeError, 
-        feeErrorMessage 
+        feeErrorMessage,
+        commissionPerOrderLocal 
     } = calculateCampaignDeposit({
       price: priceVal,
       reward: rewardVal,
@@ -161,17 +162,17 @@ const createProduct = async (req, res) => {
       [totalRequiredDepositUSD, sellerId]
     );
 
-    // Insert Product (We save local deposit in DB for ledger tracking)
+    // Insert Product with total_deposit AND platform_fee_charged
     const result = await client.query(
       `INSERT INTO products 
-      (image_url, product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, seller_id, platform, category, status, total_deposit)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending', $14)
+      (image_url, product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, seller_id, platform, category, status, total_deposit, platform_fee_charged)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending', $14, $15)
       RETURNING *`,
       [
         image_url, product_name.trim(), priceVal, store_name.trim(), search_keyword.trim(), 
         resolvedReward, product_link.trim(), safeCountry, qtyVal, 
         instructions ? instructions.trim() : '', sellerId, safePlatform, 
-        category ? category.trim() : 'General', totalRequiredDepositLocal
+        category ? category.trim() : 'General', totalRequiredDepositLocal, commissionPerOrderLocal
       ]
     );
 
