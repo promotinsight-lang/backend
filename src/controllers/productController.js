@@ -25,30 +25,58 @@ const fetchFeeConfig = async (client, country, platform) => {
 const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, useConfiguredBuyerReward = false }) => {
   const fixedBuyerReward = parseAmount(feeConfig.buyer_reward);
   const resolvedReward = useConfiguredBuyerReward && fixedBuyerReward > 0 ? fixedBuyerReward : reward;
-  const platformChargePercent = parseAmount(feeConfig.platform_charge) / 100;
-  const refundFeePercent = parseAmount(feeConfig.buyer_refund_fee || 0) / 100;
+  
+  // 🔥 NEW LOGIC 1: Dynamic Tier-based Fixed Fee Calculation (JSON Array parsing)
+  let commissionPerOrder = 0;
+  let hasFeeError = false;
+  let feeErrorMessage = "";
 
-  const costPerOrder = price + resolvedReward;
+  let platformChargeTiers = feeConfig.platform_charge;
+  
+  // Parse JSON string if needed
+  if (typeof platformChargeTiers === 'string') {
+      try { 
+          platformChargeTiers = JSON.parse(platformChargeTiers); 
+      } catch (e) { 
+          platformChargeTiers = []; 
+      }
+  }
 
-  // 🔥 NEW LOGIC 1: Platform charge applies ONLY on the base product price
-  const commissionPerOrder = price * platformChargePercent;
+  if (Array.isArray(platformChargeTiers) && platformChargeTiers.length > 0) {
+      // Find the specific tier where the price falls between min and max
+      const matchedTier = platformChargeTiers.find(t => price >= Number(t.min) && price <= Number(t.max));
+      
+      if (matchedTier) {
+          commissionPerOrder = Number(matchedTier.fee); // Fixed fee instead of percentage
+      } else {
+          hasFeeError = true;
+          feeErrorMessage = `Product price ($${price}) does not fall into any defined fixed fee tier for this platform.`;
+      }
+  } else {
+      // Fallback logic just in case it's still using old percentage format
+      const platformChargePercent = parseAmount(feeConfig.platform_charge) / 100;
+      commissionPerOrder = price * (Number.isNaN(platformChargePercent) ? 0.10 : platformChargePercent);
+  }
 
   // 🔥 NEW LOGIC 2: Refund fee applies on (Product Price + Buyer Reward)
+  const refundFeePercent = parseAmount(feeConfig.buyer_refund_fee || 0) / 100;
+  const costPerOrder = price + resolvedReward;
   const refundFeePerOrder = costPerOrder * refundFeePercent;
 
-  // Total required deposit now properly accounts for base cost + platform commission + upfront refund fee
+  // Total required deposit now properly accounts for base cost + platform commission (fixed tier) + upfront refund fee
   const requiredDepositPerOrder = costPerOrder + commissionPerOrder + refundFeePerOrder;
   const totalRequiredDeposit = requiredDepositPerOrder * quantity;
 
   return {
     resolvedReward,
-    platformChargePercent,
+    commissionPerOrder,
     refundFeePercent,
     costPerOrder,
-    commissionPerOrder,
     refundFeePerOrder,
     requiredDepositPerOrder,
     totalRequiredDeposit,
+    hasFeeError,
+    feeErrorMessage
   };
 };
 
@@ -94,13 +122,18 @@ const createProduct = async (req, res) => {
       });
     }
 
-    const { resolvedReward, totalRequiredDeposit } = calculateCampaignDeposit({
+    const { resolvedReward, totalRequiredDeposit, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
       price: priceVal,
       reward: rewardVal,
       quantity: qtyVal,
       feeConfig,
       useConfiguredBuyerReward: true,
     });
+
+    if (hasFeeError) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: feeErrorMessage });
+    }
 
     // Row-level lock on user to check balance securely
     const userResult = await client.query("SELECT wallet_balance FROM users WHERE id = $1 FOR UPDATE", [sellerId]);
@@ -204,12 +237,17 @@ const cancelProduct = async (req, res) => {
       });
     }
 
-    const { totalRequiredDeposit: refundAmount } = calculateCampaignDeposit({
+    const { totalRequiredDeposit: refundAmount, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
       price: priceVal,
       reward: rewardVal,
       quantity: qtyVal,
       feeConfig,
     });
+
+    if (hasFeeError) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: feeErrorMessage });
+    }
 
     // Refund wallet
     await client.query(
@@ -439,12 +477,17 @@ const rejectProductAdmin = async (req, res) => {
         remainingQty = Math.max(0, qtyVal - usedQty);
     }
     
-    const { totalRequiredDeposit: refundAmount } = calculateCampaignDeposit({
+    const { totalRequiredDeposit: refundAmount, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
         price: priceVal,
         reward: rewardVal,
         quantity: remainingQty,
         feeConfig,
     });
+
+    if (hasFeeError) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: feeErrorMessage });
+    }
 
     // Refund the wallet ONLY if there is remaining money
     if (refundAmount > 0) {

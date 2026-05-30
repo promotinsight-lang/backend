@@ -3,10 +3,27 @@ const pool = require('../config/db');
 // অ্যাডমিন প্যানেল থেকে ডায়নামিক ফি কনফিগারেশন সেভ বা আপডেট (UPSERT) করার ফাংশন
 const upsertFeeConfig = async (req, res) => {
     try {
-        const { country, platform, platform_charge = 0, buyer_reward = 0, buyer_refund_fee = 0, seller_deposit_fee = 0, seller_withdrawal_fee = 0 } = req.body;
+        let { 
+            country, 
+            platform, 
+            platform_charge, 
+            buyer_reward = 0, 
+            buyer_refund_fee = 0, 
+            seller_deposit_fee = 0, 
+            seller_withdrawal_fee = 0 
+        } = req.body;
 
         if (!country || !platform) {
             return res.status(400).json({ success: false, message: 'Country and Platform are required fields.' });
+        }
+
+        // 🔥 NEW LOGIC: Ensure platform_charge is correctly formatted as a JSON string for database storage
+        let processedPlatformCharge = platform_charge;
+        if (typeof platform_charge === 'object') {
+            processedPlatformCharge = JSON.stringify(platform_charge);
+        } else if (!platform_charge) {
+            // Default fallback if nothing is provided
+            processedPlatformCharge = JSON.stringify([{ min: 0, max: 0, fee: 0 }]); 
         }
 
         const query = `
@@ -27,13 +44,22 @@ const upsertFeeConfig = async (req, res) => {
         `;
 
         const values = [
-            country.trim(), platform.trim(), platform_charge, buyer_reward,
-            buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee
+            country.trim(), 
+            platform.trim(), 
+            processedPlatformCharge, 
+            buyer_reward,
+            buyer_refund_fee, 
+            seller_deposit_fee, 
+            seller_withdrawal_fee
         ];
 
         const result = await pool.query(query, values);
 
-        return res.status(200).json({ success: true, message: 'Fee configuration saved/updated successfully.', data: result.rows[0] });
+        return res.status(200).json({ 
+            success: true, 
+            message: 'Fee configuration saved/updated successfully.', 
+            data: result.rows[0] 
+        });
 
     } catch (error) {
         console.error('Error in upsertFeeConfig:', error);
