@@ -353,12 +353,12 @@ const getPublicProducts = async (req, res) => {
 const getProducts = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT p.*, u.name AS seller_name, u.email AS seller_email,
+      SELECT p.*, u.name AS seller_name, u.email AS seller_email, COALESCE(u.wallet_balance, 0) AS seller_wallet_balance,
              COALESCE(COUNT(a.id), 0)::int AS application_count
       FROM products p
       LEFT JOIN users u ON p.seller_id = u.id
       LEFT JOIN applications a ON p.id = a.product_id AND a.status != 'rejected'
-      GROUP BY p.id, u.name, u.email
+      GROUP BY p.id, u.name, u.email, u.wallet_balance
       ORDER BY p.created_at DESC
     `);
     res.status(200).json({ success: true, count: result.rows.length, data: result.rows });
