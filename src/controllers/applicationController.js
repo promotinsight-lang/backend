@@ -89,7 +89,7 @@ const applyToProduct = async (req, res) => {
 
     await client.query('BEGIN');
 
-    const userCheck = await client.query("SELECT is_active, is_frozen, country, amazon_location FROM users WHERE id = $1 FOR UPDATE", [user_id]);
+    const userCheck = await client.query("SELECT is_active, is_frozen, amazon_location FROM users WHERE id = $1 FOR UPDATE", [user_id]);
     if (userCheck.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "User not found" });
@@ -126,7 +126,7 @@ const applyToProduct = async (req, res) => {
     const product = productResult.rows[0];
     
     // 🔥 NEW LOGIC: Country Match Restriction (এক দেশের বায়ার অন্য দেশের প্রোডাক্টে অ্যাপ্লাই করতে পারবে না)
-    const buyerCountry = user.amazon_location || user.country; 
+    const buyerCountry = user.amazon_location; 
     if (buyerCountry && product.country && buyerCountry.toLowerCase() !== product.country.toLowerCase()) {
       await client.query('ROLLBACK');
       return res.status(403).json({ 
