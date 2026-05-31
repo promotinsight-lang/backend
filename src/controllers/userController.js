@@ -879,7 +879,7 @@ const forgotPassword = async (req, res) => {
       }
     });
 
-    const resetLink = `http://localhost:5173/reset-password/${user.id}/${token}`;
+    const resetLink = `http://promotinsight.com/reset-password/${user.id}/${token}`;
 
     const mailOptions = {
       from: `"PromotInsight Security" <${process.env.EMAIL_USER}>`,
