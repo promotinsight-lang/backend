@@ -89,7 +89,7 @@ const applyToProduct = async (req, res) => {
 
     await client.query('BEGIN');
 
-    const userCheck = await client.query("SELECT is_active, is_frozen FROM users WHERE id = $1 FOR UPDATE", [user_id]);
+    const userCheck = await client.query("SELECT is_active, is_frozen, country, amazon_location FROM users WHERE id = $1 FOR UPDATE", [user_id]);
     if (userCheck.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "User not found" });
@@ -113,8 +113,8 @@ const applyToProduct = async (req, res) => {
       return res.status(400).json({ message: "product_id is required" });
     }
 
-    const productResult = await client.query(
-      "SELECT id, status, required_orders FROM products WHERE id = $1 FOR UPDATE",
+   const productResult = await client.query(
+      "SELECT id, status, required_orders, country FROM products WHERE id = $1 FOR UPDATE",
       [productId]
     );
 
@@ -124,6 +124,16 @@ const applyToProduct = async (req, res) => {
     }
 
     const product = productResult.rows[0];
+    
+    // 🔥 NEW LOGIC: Country Match Restriction (এক দেশের বায়ার অন্য দেশের প্রোডাক্টে অ্যাপ্লাই করতে পারবে না)
+    const buyerCountry = user.amazon_location || user.country; 
+    if (buyerCountry && product.country && buyerCountry.toLowerCase() !== product.country.toLowerCase()) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ 
+        message: `Cross-border application restricted. You can only apply for products available in your registered country (${buyerCountry}).` 
+      });
+    }
+
     if (product.status !== 'approved') {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: "This product is not available for new applications" });
@@ -499,23 +509,29 @@ const confirmRefund = async (req, res) => {
     let finalRefundAmount = totalGrossAmount;
     let refundFeeAmount = 0;
     let message = "";
+    let localRefundAmount = "0.00"; 
+    let localCurrencyCode = app.country || "Local";
 
     if (app.category !== 'Pre-Pay') {
       const feeResult = await client.query(
-        "SELECT buyer_refund_fee FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)",
+        "SELECT buyer_refund_fee, exchange_rate FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)",
         [app.country, app.platform]
       );
       
       const feeStr = feeResult.rows.length > 0 ? feeResult.rows[0].buyer_refund_fee : 0;
+      const exchangeRate = feeResult.rows.length > 0 && feeResult.rows[0].exchange_rate ? parseFloat(feeResult.rows[0].exchange_rate) : 1;
+
       const refundFeePercent = parseFloat(feeStr || 0) / 100;
       
       refundFeeAmount = totalGrossAmount * refundFeePercent;
       finalRefundAmount = totalGrossAmount - refundFeeAmount;
 
+      localRefundAmount = (finalRefundAmount * exchangeRate).toFixed(2);
+
       // 🔥 CRITICAL FIX: COALESCE(wallet_balance, 0) ব্যবহার করা হয়েছে যেন NULL থাকলে 0 ধরে নেয়
       await client.query(`UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2`, [finalRefundAmount, app.user_id]);
       
-      message = `Refund confirmed successfully. $${finalRefundAmount.toFixed(2)} added to buyer's wallet. (Network Fee: $${refundFeeAmount.toFixed(2)} deducted)`;
+      message = `Refund confirmed successfully. $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}) added to buyer's wallet. (Network Fee: $${refundFeeAmount.toFixed(2)} deducted)`;
     } else {
       message = `Payment confirmed for Pre-Pay task. Amount sent to external account, wallet not updated.`;
     }
@@ -530,7 +546,7 @@ const confirmRefund = async (req, res) => {
     if (app.category !== 'Pre-Pay') {
         await client.query(
             "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
-            [app.user_id, finalRefundAmount, `Refund received for Application #${applicationId} (Fee deducted: $${refundFeeAmount.toFixed(2)})`]
+            [app.user_id, finalRefundAmount, `Refund received for Application #${applicationId}. Added: $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}). (Fee deducted: $${refundFeeAmount.toFixed(2)})`]
         );
     }
 

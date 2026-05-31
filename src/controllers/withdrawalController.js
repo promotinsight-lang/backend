@@ -17,8 +17,8 @@ const requestWithdrawal = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 1. Lock user's wallet to prevent concurrent double-spending
-    const userResult = await client.query("SELECT wallet_balance, role FROM users WHERE id = $1 FOR UPDATE", [userId]);
+   // 1. Lock user's wallet to prevent concurrent double-spending
+    const userResult = await client.query("SELECT wallet_balance, role, country, amazon_location FROM users WHERE id = $1 FOR UPDATE", [userId]);
     
     if (userResult.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -34,16 +34,31 @@ const requestWithdrawal = async (req, res) => {
       return res.status(400).json({ success: false, message: "Insufficient wallet balance. You cannot withdraw more than you have." });
     }
 
-    // 🔥 2. DYNAMIC WITHDRAWAL FEE CALCULATION (%)
-    const feeConfig = await client.query("SELECT seller_withdrawal_fee FROM dynamic_fees_config LIMIT 1");
-    let feePercent = 0.0; // Default 0%
+    const userCountry = userResult.rows[0].amazon_location || userResult.rows[0].country || 'Local';
+
+    // 🔥 2. DYNAMIC WITHDRAWAL FEE & LOCAL CURRENCY CALCULATION
+    const feeConfig = await client.query(
+      "SELECT seller_withdrawal_fee, exchange_rate FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) LIMIT 1",
+      [userCountry]
+    );
     
+    let feePercent = 0.0; // Default 0%
+    let exchangeRate = 1;
+
     if (feeConfig.rows.length > 0) {
-        feePercent = parseFloat(feeConfig.rows[0].seller_withdrawal_fee) / 100;
+        feePercent = parseFloat(feeConfig.rows[0].seller_withdrawal_fee || 0) / 100;
+        exchangeRate = parseFloat(feeConfig.rows[0].exchange_rate || 1);
+    } else {
+        // Fallback to default if country not found
+        const defaultFeeConfig = await client.query("SELECT seller_withdrawal_fee FROM dynamic_fees_config LIMIT 1");
+        if (defaultFeeConfig.rows.length > 0) {
+            feePercent = parseFloat(defaultFeeConfig.rows[0].seller_withdrawal_fee || 0) / 100;
+        }
     }
 
     const feeAmount = amountValue * feePercent;
     const netPayable = amountValue - feeAmount;
+    const localNetPayable = (netPayable * exchangeRate).toFixed(2);
 
     // 3. Deduct total requested amount from wallet (🔥 COALESCE added for extra DB safety)
     await client.query(
@@ -51,8 +66,8 @@ const requestWithdrawal = async (req, res) => {
       [amountValue, userId]
     );
 
-    // 🔥 SMART TRICK: Append fee breakdown to account_details so Admin sees exactly what to pay
-    const finalAccountDetails = `${account_details.trim()}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)}]`;
+    // 🔥 SMART TRICK: Append fee breakdown and dual currency to account_details so Admin sees exactly what to pay
+    const finalAccountDetails = `${account_details.trim()}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})]`;
 
     // 4. Insert withdrawal request
     const withdrawalResult = await client.query(
@@ -64,14 +79,14 @@ const requestWithdrawal = async (req, res) => {
     // 5. Log the transaction securely
     await client.query(
         "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'withdrawal', $3, 'pending')",
-        [userId, amountValue, `Withdrawal requested. Fee deducted: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)}`]
+        [userId, amountValue, `Withdrawal requested. Fee deducted: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})`]
     );
 
     await client.query('COMMIT');
 
     res.status(201).json({
       success: true,
-      message: `Withdrawal request submitted successfully. Processing Fee: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)}`,
+      message: `Withdrawal request submitted successfully. Net to receive: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})`,
       data: withdrawalResult.rows[0]
     });
 
