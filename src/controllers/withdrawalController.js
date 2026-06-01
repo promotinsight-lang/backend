@@ -18,7 +18,10 @@ const requestWithdrawal = async (req, res) => {
     await client.query('BEGIN');
 
    // 1. Lock user's wallet to prevent concurrent double-spending
-    const userResult = await client.query("SELECT wallet_balance, role, country, amazon_location FROM users WHERE id = $1 FOR UPDATE", [userId]);
+    const userResult = await client.query(
+      "SELECT wallet_balance, role, amazon_location, ip_location FROM users WHERE id = $1 FOR UPDATE",
+      [userId]
+    );
     
     if (userResult.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -34,7 +37,7 @@ const requestWithdrawal = async (req, res) => {
       return res.status(400).json({ success: false, message: "Insufficient wallet balance. You cannot withdraw more than you have." });
     }
 
-    const userCountry = userResult.rows[0].amazon_location || userResult.rows[0].country || 'Local';
+    const userCountry = userResult.rows[0].amazon_location || userResult.rows[0].ip_location || 'Local';
 
     // 🔥 2. DYNAMIC WITHDRAWAL FEE & LOCAL CURRENCY CALCULATION
     const feeConfig = await client.query(
@@ -91,7 +94,7 @@ const requestWithdrawal = async (req, res) => {
     });
 
   } catch (error) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
     console.error("REQUEST WITHDRAWAL ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
   } finally {
