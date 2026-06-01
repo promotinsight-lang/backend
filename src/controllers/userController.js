@@ -276,7 +276,11 @@ const registerUser = async (req, res) => {
       return res.status(400).json({ success: false, message: "Password must be at least 8 characters long." });
     }
 
-    const userRole = role ? role.trim().toLowerCase() : "buyer";
+   const userRole =
+  role &&
+  ["buyer", "seller"].includes(role.trim().toLowerCase())
+    ? role.trim().toLowerCase()
+    : "buyer";
     const existingUser = await pool.query("SELECT id FROM users WHERE email = $1", [emailTrimmed]);
 
     if (existingUser.rows.length > 0) {
@@ -434,12 +438,18 @@ const socialLogin = async (req, res) => {
     );
 
     let user;
+if (existingUser.rows.length > 0) {
+  user = existingUser.rows[0];
 
-    if (existingUser.rows.length > 0) {
-      user = existingUser.rows[0];
-      // 🔥 Update IP and Location for returning social login user
-      await pool.query("UPDATE users SET last_ip = $1, ip_location = $2 WHERE id = $3", [ipAddress, ipLocation, user.id]);
-    } else {
+  console.log("Existing User Found:");
+  console.log("DB Role:", user.role);
+  console.log("Requested Role:", role);
+
+  await pool.query(
+    "UPDATE users SET last_ip = $1, ip_location = $2 WHERE id = $3",
+    [ipAddress, ipLocation, user.id]
+  );
+} else {
       const randomPassword = crypto.randomBytes(16).toString('hex');
       const hashedPassword = await bcrypt.hash(randomPassword, 12);
       const finalName = name ? name.trim() : 'User';
@@ -454,8 +464,8 @@ const socialLogin = async (req, res) => {
       }
 
       const newReferralCode = generateReferralCode(finalName);
-
-      const userRole = role ? role.trim().toLowerCase() : 'buyer'; // Use selected role or default to buyer
+      const normalizedRole = role ? role.trim().toLowerCase() : 'buyer';
+      const userRole = normalizedRole === 'seller' ? 'seller' : 'buyer';
 
       // 🔥 Insert IP, Location, and Referral Data for new social login user
       const newUser = await pool.query(
