@@ -416,7 +416,7 @@ const loginUser = async (req, res) => {
 // =======================
 const socialLogin = async (req, res) => {
   try {
-    const { email, name, auth_provider, referred_by_code } = req.body;
+    const { email, name, auth_provider, referred_by_code, role } = req.body;
     
     // 🔥 Track IP and Location on Social Login
     const ipAddress = getClientIp(req); 
@@ -455,12 +455,14 @@ const socialLogin = async (req, res) => {
 
       const newReferralCode = generateReferralCode(finalName);
 
+      const userRole = role ? role.trim().toLowerCase() : 'buyer'; // Use selected role or default to buyer
+
       // 🔥 Insert IP, Location, and Referral Data for new social login user
       const newUser = await pool.query(
         `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by)
-         VALUES ($1, $2, $3, 'buyer', $4, $5, $6, $7)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, name, email, role, verification_status`,
-        [finalName, emailTrimmed, hashedPassword, ipAddress, ipLocation, newReferralCode, referredById]
+        [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById]
       );
       
       user = newUser.rows[0];
