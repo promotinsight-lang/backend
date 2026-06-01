@@ -241,8 +241,8 @@ const getApplicationsByProduct = async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT a.id, a.status, a.order_number, a.screenshot_url, a.order_comment, 
-              a.review_screenshot_url, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at, a.ip_address, a.ip_location,
+      `SELECT a.id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
+              a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at, a.ip_address, a.ip_location,
               u.name, u.email 
        FROM applications a JOIN users u ON a.user_id = u.id WHERE a.product_id = $1 ORDER BY a.created_at DESC`,
       [productId]
@@ -261,8 +261,8 @@ const getMyApplications = async (req, res) => {
     const userId = req.user.id;
     const result = await pool.query(
       `SELECT 
-         a.id AS application_id, a.status AS application_status, a.order_number, a.screenshot_url, a.order_comment,
-         a.review_screenshot_url, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at AS applied_on,
+         a.id AS application_id, a.status AS application_status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment,
+         a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at AS applied_on,
          p.id AS product_id, p.product_name, p.image_url, p.price, p.reward, p.country, p.platform, p.store_name, p.search_keyword, p.instructions, p.category
        FROM applications a JOIN products p ON a.product_id = p.id
        WHERE a.user_id = $1 ORDER BY a.created_at DESC`,
@@ -280,7 +280,7 @@ const getMyApplications = async (req, res) => {
 const submitOrder = async (req, res) => {
   try {
     const applicationId = req.params.id;
-    const { order_number, screenshot_url, order_comment } = req.body;
+    const { order_number, screenshot_url, screenshot_url_2, order_comment } = req.body;
     const userId = req.user.id;
 
     if (!order_number || order_number.trim() === '') {
@@ -293,10 +293,17 @@ const submitOrder = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE applications 
-       SET order_number = $1, screenshot_url = $2, order_comment = $3, status = 'order_submitted' 
-       WHERE id = $4 AND user_id = $5 AND status = 'approved'
+       SET order_number = $1, screenshot_url = $2, screenshot_url_2 = $3, order_comment = $4, status = 'order_submitted' 
+       WHERE id = $5 AND user_id = $6 AND status = 'approved'
        RETURNING *`,
-      [escapeHTML(order_number.trim()), screenshot_url ? escapeHTML(screenshot_url.trim()) : null, order_comment ? escapeHTML(order_comment.trim()) : null, applicationId, userId]
+      [
+        escapeHTML(order_number.trim()),
+        screenshot_url ? escapeHTML(screenshot_url.trim()) : null,
+        screenshot_url_2 ? escapeHTML(screenshot_url_2.trim()) : null,
+        order_comment ? escapeHTML(order_comment.trim()) : null,
+        applicationId,
+        userId
+      ]
     );
 
     if (result.rows.length === 0) {
@@ -351,10 +358,10 @@ const rejectOrder = async (req, res) => {
 const submitReview = async (req, res) => {
   try {
     const applicationId = req.params.id;
-    const { review_screenshot_url, review_link } = req.body;
+    const { review_screenshot_url, review_screenshot_url_2, review_link } = req.body;
     const userId = req.user.id;
 
-    if (!review_screenshot_url && !review_link) {
+    if (!review_screenshot_url && !review_screenshot_url_2 && !review_link) {
       return res.status(400).json({ message: "Please provide either a review screenshot or a review link" });
     }
 
@@ -364,12 +371,13 @@ const submitReview = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE applications 
-       SET review_screenshot_url = $1, review_link = $2, status = 'review_submitted' 
-       WHERE id = $3 AND user_id = $4 AND status = 'order_approved'
+       SET review_screenshot_url = $1, review_screenshot_url_2 = $2, review_link = $3, status = 'review_submitted' 
+       WHERE id = $4 AND user_id = $5 AND status = 'order_approved'
        RETURNING *`,
       [
-        review_screenshot_url ? escapeHTML(review_screenshot_url.trim()) : null, 
-        review_link ? escapeHTML(review_link.trim()) : null, 
+        review_screenshot_url ? escapeHTML(review_screenshot_url.trim()) : null,
+        review_screenshot_url_2 ? escapeHTML(review_screenshot_url_2.trim()) : null,
+        review_link ? escapeHTML(review_link.trim()) : null,
         applicationId,
         userId
       ]
@@ -618,7 +626,7 @@ const getSellerProductReviews = async (req, res) => {
     if (productCheck.rows.length === 0) return res.status(403).json({ message: "Unauthorized. This product does not belong to you." });
 
     const result = await pool.query(
-      `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.review_screenshot_url, a.review_link, a.refund_comment, a.created_at, 
+      `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at, 
               u.name AS buyer_name, u.amazon_profile_url AS profile_link, u.trust_score
        FROM applications a 
        JOIN users u ON a.user_id = u.id 
@@ -639,8 +647,8 @@ const getSellerProductReviews = async (req, res) => {
 const getAllApplicationsAdmin = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT a.id, a.user_id, a.status, a.order_number, a.screenshot_url, a.order_comment, 
-             a.review_link, a.review_screenshot_url, a.created_at, a.ip_address, a.ip_location,
+      SELECT a.id, a.user_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
+             a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.created_at, a.ip_address, a.ip_location,
              p.product_name, p.image_url, p.price, p.reward,
              p.platform, p.country, p.store_name, p.search_keyword, p.instructions, p.product_link, p.seller_id, p.category,
              u.name AS buyer_name, u.email AS buyer_email, u.trust_score,
