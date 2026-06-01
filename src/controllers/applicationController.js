@@ -512,26 +512,24 @@ const confirmRefund = async (req, res) => {
     let localRefundAmount = "0.00"; 
     let localCurrencyCode = app.country || "Local";
 
-    if (app.category !== 'Pre-Pay') {
+ if (app.category !== 'Pre-Pay') {
       const feeResult = await client.query(
-        "SELECT buyer_refund_fee, exchange_rate FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)",
+        "SELECT exchange_rate FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)",
         [app.country, app.platform]
       );
       
-      const feeStr = feeResult.rows.length > 0 ? feeResult.rows[0].buyer_refund_fee : 0;
       const exchangeRate = feeResult.rows.length > 0 && feeResult.rows[0].exchange_rate ? parseFloat(feeResult.rows[0].exchange_rate) : 1;
 
-      const refundFeePercent = parseFloat(feeStr || 0) / 100;
-      
-      refundFeeAmount = totalGrossAmount * refundFeePercent;
-      finalRefundAmount = totalGrossAmount - refundFeeAmount;
+      // ফি এর ক্যালকুলেশন রিমুভ করে বায়ারকে সম্পূর্ণ টাকা (Price + Reward) দেওয়া হলো
+      refundFeeAmount = 0; 
+      finalRefundAmount = totalGrossAmount; 
 
       localRefundAmount = (finalRefundAmount * exchangeRate).toFixed(2);
 
       // 🔥 CRITICAL FIX: COALESCE(wallet_balance, 0) ব্যবহার করা হয়েছে যেন NULL থাকলে 0 ধরে নেয়
       await client.query(`UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2`, [finalRefundAmount, app.user_id]);
       
-      message = `Refund confirmed successfully. $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}) added to buyer's wallet. (Network Fee: $${refundFeeAmount.toFixed(2)} deducted)`;
+      message = `Refund confirmed successfully. $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}) added to buyer's wallet.`;
     } else {
       message = `Payment confirmed for Pre-Pay task. Amount sent to external account, wallet not updated.`;
     }
@@ -543,10 +541,10 @@ const confirmRefund = async (req, res) => {
       [finalOrderText, refund_comment ? escapeHTML(refund_comment.trim()) : null, applicationId]
     );
 
-    if (app.category !== 'Pre-Pay') {
+   if (app.category !== 'Pre-Pay') {
         await client.query(
             "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
-            [app.user_id, finalRefundAmount, `Refund received for Application #${applicationId}. Added: $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}). (Fee deducted: $${refundFeeAmount.toFixed(2)})`]
+            [app.user_id, finalRefundAmount, `Refund received for Application #${applicationId}. Added: $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}).`]
         );
     }
 
