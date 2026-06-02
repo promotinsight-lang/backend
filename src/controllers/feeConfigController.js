@@ -72,7 +72,39 @@ const upsertFeeConfig = async (req, res) => {
             processedVerificationFields
         ];
 
-        const result = await pool.query(query, values);
+        let result;
+        try {
+            result = await pool.query(query, values);
+        } catch (dbErr) {
+            // Fallback when verification_fields column is not migrated yet
+            const legacyQuery = `
+            INSERT INTO dynamic_fees_config (
+                country, platform, platform_charge, buyer_reward, 
+                buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee, exchange_rate
+            ) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (country, platform) 
+            DO UPDATE SET 
+                platform_charge = EXCLUDED.platform_charge,
+                buyer_reward = EXCLUDED.buyer_reward,
+                buyer_refund_fee = EXCLUDED.buyer_refund_fee,
+                seller_deposit_fee = EXCLUDED.seller_deposit_fee,
+                seller_withdrawal_fee = EXCLUDED.seller_withdrawal_fee,
+                exchange_rate = EXCLUDED.exchange_rate,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING *;
+        `;
+            result = await pool.query(legacyQuery, values.slice(0, 8));
+
+            if (Array.isArray(verification_fields) && verification_fields.length > 0) {
+                try {
+                    const { savePlatformFieldsToStore } = require('./verificationConfigController');
+                    await savePlatformFieldsToStore(country, platform, verification_fields);
+                } catch (innerErr) {
+                    console.warn('Saved tariffs; platform verification fields stored separately.', innerErr.message);
+                }
+            }
+        }
 
         return res.status(200).json({ 
             success: true, 

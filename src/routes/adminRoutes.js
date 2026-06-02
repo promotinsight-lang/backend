@@ -11,6 +11,13 @@ const {
   approveAppeal, rejectAppeal, getMonthlyStats
 } = require("../controllers/adminController");
 
+const {
+  getGlobalVerificationFields,
+  updateGlobalVerificationFields,
+  getPlatformVerificationFields,
+  updatePlatformVerificationFields,
+} = require("../controllers/verificationConfigController");
+
 const adminActionLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -40,5 +47,12 @@ router.patch("/verify-user/:id", adminActionLimiter, verifyUser);
 router.get("/appeals", getAppeals);
 router.patch("/appeals/:id/approve", adminActionLimiter, approveAppeal);
 router.patch("/appeals/:id/reject", adminActionLimiter, rejectAppeal);
+
+// Buyer verification field config (works without /api/config/verification deploy)
+router.get("/verification-config/global", getGlobalVerificationFields);
+router.post("/verification-config/global", adminActionLimiter, updateGlobalVerificationFields);
+router.put("/verification-config/global", adminActionLimiter, updateGlobalVerificationFields);
+router.get("/verification-config/platform", getPlatformVerificationFields);
+router.post("/verification-config/platform", adminActionLimiter, updatePlatformVerificationFields);
 
 module.exports = router;

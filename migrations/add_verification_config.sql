@@ -2,8 +2,12 @@
 CREATE TABLE IF NOT EXISTS verification_global_config (
   id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+  platform_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE verification_global_config
+  ADD COLUMN IF NOT EXISTS platform_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 INSERT INTO verification_global_config (id, fields)
 VALUES (

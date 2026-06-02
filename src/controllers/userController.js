@@ -649,18 +649,10 @@ const submitVerification = async (req, res) => {
         }
       }
 
+      const { getPlatformFieldsFor } = require('./verificationConfigController');
+
       for (const platformName of platforms) {
-        const feeRow = await pool.query(
-          `SELECT verification_fields FROM dynamic_fees_config
-           WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)`,
-          [country.trim(), platformName.trim()]
-        );
-        let platFields = feeRow.rows.length
-          ? parseFieldArray(feeRow.rows[0].verification_fields)
-          : [
-              { key: 'account_name', label: 'Account Name', type: 'text', required: true },
-              { key: 'profile_url', label: 'Profile URL', type: 'url', required: true },
-            ];
+        let platFields = await getPlatformFieldsFor(country.trim(), platformName.trim());
 
         const platformValues = platData[platformName] || {};
         for (const field of platFields) {
