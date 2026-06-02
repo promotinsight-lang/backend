@@ -577,70 +577,230 @@ const updateUserName = async (req, res) => {
 };
 
 // ==========================================
-// 🛡️ Submit User Verification Info
+// 🛡️ Submit User Verification Info (legacy + dynamic)
 // ==========================================
+const parseFieldArray = (val) => {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try {
+      const p = JSON.parse(val);
+      return Array.isArray(p) ? p : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 const submitVerification = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { 
-      amazon_location, amazon_account, amazon_profile_url, 
-      paypal_account, facebook_account, whatsapp_account, telegram_account 
+    const {
+      country,
+      platforms,
+      global: globalBody,
+      platform_responses,
+      responses,
+      amazon_location,
+      amazon_account,
+      amazon_profile_url,
+      paypal_account,
+      facebook_account,
+      whatsapp_account,
+      telegram_account,
     } = req.body;
 
-    if (!amazon_location || !amazon_account || !amazon_profile_url || !paypal_account || !whatsapp_account) {
-      return res.status(400).json({ success: false, message: "Amazon info, PayPal info, and WhatsApp number are required!" });
+    const isDynamic =
+      country &&
+      Array.isArray(platforms) &&
+      platforms.length > 0 &&
+      (globalBody || responses?.global || platform_responses || responses?.platforms);
+
+    let amazonLoc, amazonAcc, amazonUrl, paypal, facebook, whatsapp, telegram;
+    let verificationCountry = null;
+    let verificationPlatforms = null;
+    let verificationResponses = null;
+
+    if (isDynamic) {
+      const globalData = globalBody || responses?.global || {};
+      const platData = platform_responses || responses?.platforms || {};
+
+      const globalCfgRes = await pool.query(
+        'SELECT fields FROM verification_global_config WHERE id = 1'
+      ).catch(() => ({ rows: [] }));
+
+      const globalFields = globalCfgRes.rows.length
+        ? parseFieldArray(globalCfgRes.rows[0].fields)
+        : [];
+
+      for (const field of globalFields) {
+        const val = globalData[field.key];
+        if (field.required && (!val || !String(val).trim())) {
+          return res.status(400).json({
+            success: false,
+            message: `${field.label} is required.`,
+          });
+        }
+        if (val && field.type === 'email' && !isValidEmail(String(val).trim())) {
+          return res.status(400).json({ success: false, message: `${field.label} must be a valid email.` });
+        }
+        if (val && field.type === 'url' && !isValidURL(String(val).trim())) {
+          return res.status(400).json({ success: false, message: `${field.label} must be a valid URL.` });
+        }
+      }
+
+      for (const platformName of platforms) {
+        const feeRow = await pool.query(
+          `SELECT verification_fields FROM dynamic_fees_config
+           WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)`,
+          [country.trim(), platformName.trim()]
+        );
+        let platFields = feeRow.rows.length
+          ? parseFieldArray(feeRow.rows[0].verification_fields)
+          : [
+              { key: 'account_name', label: 'Account Name', type: 'text', required: true },
+              { key: 'profile_url', label: 'Profile URL', type: 'url', required: true },
+            ];
+
+        const platformValues = platData[platformName] || {};
+        for (const field of platFields) {
+          const val = platformValues[field.key];
+          if (field.required && (!val || !String(val).trim())) {
+            return res.status(400).json({
+              success: false,
+              message: `${platformName}: ${field.label} is required.`,
+            });
+          }
+          if (val && field.type === 'url' && !isValidURL(String(val).trim())) {
+            return res.status(400).json({
+              success: false,
+              message: `${platformName}: ${field.label} must be a valid URL.`,
+            });
+          }
+        }
+      }
+
+      amazonLoc = country.trim();
+      const firstPlat = platforms[0];
+      const firstVals = platData[firstPlat] || {};
+      amazonAcc =
+        firstVals.account_name ||
+        firstVals.amazon_account ||
+        Object.values(firstVals).find((v) => v && typeof v === 'string') ||
+        platforms.join(', ');
+      amazonUrl =
+        firstVals.profile_url ||
+        firstVals.amazon_profile_url ||
+        '';
+
+      paypal = (globalData.paypal_account || '').trim();
+      whatsapp = (globalData.whatsapp_account || '').trim();
+      facebook = globalData.facebook_account ? String(globalData.facebook_account).trim() : null;
+      telegram = globalData.telegram_account ? String(globalData.telegram_account).trim() : null;
+
+      verificationCountry = country.trim();
+      verificationPlatforms = JSON.stringify(platforms);
+      verificationResponses = JSON.stringify({ global: globalData, platforms: platData });
+
+      if (!paypal || !whatsapp) {
+        return res.status(400).json({
+          success: false,
+          message: 'PayPal email and WhatsApp number are required.',
+        });
+      }
+      if (amazonUrl && !isValidURL(amazonUrl)) {
+        return res.status(400).json({ success: false, message: 'Profile URL must be a valid link.' });
+      }
+    } else {
+      amazonLoc = amazon_location;
+      amazonAcc = amazon_account;
+      amazonUrl = amazon_profile_url;
+      paypal = paypal_account;
+      facebook = facebook_account;
+      whatsapp = whatsapp_account;
+      telegram = telegram_account;
+
+      if (!amazonLoc || !amazonAcc || !amazonUrl || !paypal || !whatsapp) {
+        return res.status(400).json({
+          success: false,
+          message: 'Amazon info, PayPal info, and WhatsApp number are required!',
+        });
+      }
+
+      if (!isValidURL(amazonUrl)) {
+        return res.status(400).json({ success: false, message: 'Amazon profile must be a valid URL link.' });
+      }
     }
 
-    if (!isValidURL(amazon_profile_url)) {
-      return res.status(400).json({ success: false, message: "Amazon profile must be a valid URL link." });
+    if (facebook && !isValidURL(facebook)) {
+      return res.status(400).json({ success: false, message: 'Facebook account must be a valid URL link.' });
     }
 
-    if (facebook_account && !isValidURL(facebook_account)) {
-      return res.status(400).json({ success: false, message: "Facebook account must be a valid URL link." });
-    }
-
-    // 🔥 FRAUD PREVENTION: Check for Duplicate WhatsApp or Amazon Profile URL
+    const profileUrlForDup = amazonUrl || '';
     const duplicateCheck = await pool.query(
-      `SELECT id FROM users 
-       WHERE (whatsapp_account = $1 OR amazon_profile_url = $2) 
+      `SELECT id FROM users
+       WHERE (whatsapp_account = $1 OR ($2 <> '' AND amazon_profile_url = $2))
        AND id != $3`,
-      [whatsapp_account.trim(), amazon_profile_url.trim(), userId]
+      [whatsapp.trim(), profileUrlForDup.trim(), userId]
     );
 
     if (duplicateCheck.rows.length > 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Fraud Alert: This WhatsApp number or Amazon Profile URL is already linked with another account!" 
+      return res.status(400).json({
+        success: false,
+        message:
+          'Fraud Alert: This WhatsApp number or profile URL is already linked with another account!',
       });
     }
 
-    const result = await pool.query(
-      `UPDATE users 
-       SET amazon_location = $1, amazon_account = $2, amazon_profile_url = $3, 
-           paypal_account = $4, facebook_account = $5, whatsapp_account = $6, 
-           telegram_account = $7, verification_status = 'pending'
-       WHERE id = $8 RETURNING *`,
-      [
-        amazon_location.trim(), 
-        amazon_account.trim(), 
-        amazon_profile_url.trim(), 
-        paypal_account.trim(), 
-        facebook_account ? facebook_account.trim() : null, 
-        whatsapp_account ? whatsapp_account.trim() : null, 
-        telegram_account ? telegram_account.trim() : null, 
-        userId
-      ]
-    );
+    const baseParams = [
+      amazonLoc.trim(),
+      amazonAcc.trim(),
+      amazonUrl ? amazonUrl.trim() : '',
+      paypal.trim(),
+      facebook,
+      whatsapp.trim(),
+      telegram,
+      userId,
+    ];
 
-    res.status(200).json({ 
-      success: true, 
-      message: "Verification submitted successfully!",
-      user: result.rows[0]
+    let result;
+    try {
+      result = await pool.query(
+        `UPDATE users
+         SET amazon_location = $1, amazon_account = $2, amazon_profile_url = $3,
+             paypal_account = $4, facebook_account = $5, whatsapp_account = $6,
+             telegram_account = $7, verification_status = 'pending',
+             verification_country = COALESCE($8, verification_country),
+             verification_platforms = COALESCE($9::jsonb, verification_platforms),
+             verification_responses = COALESCE($10::jsonb, verification_responses)
+         WHERE id = $11 RETURNING *`,
+        [
+          ...baseParams.slice(0, 7),
+          verificationCountry,
+          verificationPlatforms,
+          verificationResponses,
+          userId,
+        ]
+      );
+    } catch {
+      result = await pool.query(
+        `UPDATE users
+         SET amazon_location = $1, amazon_account = $2, amazon_profile_url = $3,
+             paypal_account = $4, facebook_account = $5, whatsapp_account = $6,
+             telegram_account = $7, verification_status = 'pending'
+         WHERE id = $8 RETURNING *`,
+        baseParams
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Verification submitted successfully!',
+      user: result.rows[0],
     });
-
   } catch (error) {
-    console.error("SUBMIT VERIFICATION ERROR:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error('SUBMIT VERIFICATION ERROR:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 

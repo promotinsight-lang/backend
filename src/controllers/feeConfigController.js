@@ -11,7 +11,8 @@ const upsertFeeConfig = async (req, res) => {
             buyer_refund_fee = 0, 
             seller_deposit_fee = 0, 
             seller_withdrawal_fee = 0,
-            exchange_rate = 1 // 🔥 NEW: Exchange Rate for local currency to USD calculation
+            exchange_rate = 1,
+            verification_fields = []
         } = req.body;
 
         if (!country || !platform) {
@@ -27,13 +28,25 @@ const upsertFeeConfig = async (req, res) => {
             processedPlatformCharge = JSON.stringify([{ min: 0, max: 0, fee: 0 }]); 
         }
 
-        // UPSERT Query with exchange_rate
+        let processedVerificationFields = verification_fields;
+        if (typeof verification_fields === 'object' && !Array.isArray(verification_fields)) {
+            processedVerificationFields = [];
+        } else if (Array.isArray(verification_fields)) {
+            processedVerificationFields = JSON.stringify(verification_fields);
+        } else if (typeof verification_fields === 'string') {
+            processedVerificationFields = verification_fields;
+        } else {
+            processedVerificationFields = '[]';
+        }
+
+        // UPSERT Query with exchange_rate + verification_fields
         const query = `
             INSERT INTO dynamic_fees_config (
                 country, platform, platform_charge, buyer_reward, 
-                buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee, exchange_rate
+                buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee, exchange_rate,
+                verification_fields
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
             ON CONFLICT (country, platform) 
             DO UPDATE SET 
                 platform_charge = EXCLUDED.platform_charge,
@@ -42,6 +55,7 @@ const upsertFeeConfig = async (req, res) => {
                 seller_deposit_fee = EXCLUDED.seller_deposit_fee,
                 seller_withdrawal_fee = EXCLUDED.seller_withdrawal_fee,
                 exchange_rate = EXCLUDED.exchange_rate,
+                verification_fields = EXCLUDED.verification_fields,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *;
         `;
@@ -54,7 +68,8 @@ const upsertFeeConfig = async (req, res) => {
             buyer_refund_fee, 
             seller_deposit_fee, 
             seller_withdrawal_fee,
-            exchange_rate
+            exchange_rate,
+            processedVerificationFields
         ];
 
         const result = await pool.query(query, values);

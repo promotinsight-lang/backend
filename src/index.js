@@ -107,6 +107,7 @@ const announcementRoutes = require("./routes/announcementRoutes");
 const blogRoutes = require("./routes/blogRoutes"); 
 // 🔥 NEW: Fee Configuration Routes import kora holo
 const feeConfigRoutes = require("./routes/feeConfigRoutes");
+const verificationConfigRoutes = require("./routes/verificationConfigRoutes");
 
 app.use("/api/users", userRoutes); 
 app.use("/api/products", productRoutes); 
@@ -119,6 +120,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/blogs", blogRoutes); 
 // 🔥 NEW: Fee Configuration API route mount kora holo
 app.use("/api/config/fees", feeConfigRoutes);
+app.use("/api/config/verification", verificationConfigRoutes);
 
 // ==========================================
 // 🌐 HEALTH CHECK & ERROR HANDLING
