@@ -136,7 +136,7 @@ const requestWithdrawal = async (req, res) => {
     // 🔥 SMART TRICK: Append fee breakdown to account_details
     const finalAccountDetails = `${baseAccountDetails}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})]`.trim();
 
-    // 6. Insert withdrawal request with new Crypto & Legacy & QR fields
+    // 6. Insert withdrawal request with new Crypto, Legacy & QR fields
     const withdrawalResult = await client.query(
       `INSERT INTO withdrawals (
         user_id, amount, payment_method, account_details, 
