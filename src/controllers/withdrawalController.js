@@ -1,7 +1,7 @@
 const pool = require("../config/db");
 
 // ==========================================
-// 💸 Request Withdrawal (Buyer/Seller) - 🔥 SECURED TRANSACTION WITH CRYPTO & QR SUPPORT
+// 💸 Request Withdrawal (Buyer/Seller) - 🔥 FIXED SQL ID ERROR & ADDED QR SUPPORT
 // ==========================================
 const requestWithdrawal = async (req, res) => {
   const client = await pool.connect();
@@ -22,19 +22,24 @@ const requestWithdrawal = async (req, res) => {
 
     // 1. Fetch Payment Method Details (Support Crypto & Fiat)
     const methodRes = await client.query(
-      `SELECT * FROM payment_methods WHERE LOWER(name) = LOWER($1)
-       UNION ALL
-       SELECT id, $1::text as name, 'legacy' as type, FALSE as requires_network, FALSE as requires_memo, TRUE as requires_address, TRUE as requires_account_details, NULL as example_address, NULL as example_network, NULL as example_memo, TRUE as active
-       WHERE NOT EXISTS (SELECT 1 FROM payment_methods WHERE LOWER(name) = LOWER($1))`,
+      "SELECT * FROM payment_methods WHERE LOWER(name) = LOWER($1)",
       [payment_method]
     );
 
+    let method;
     if (methodRes.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ success: false, message: "Payment method not found" });
+      // 🔥 FIXED: Handled Legacy fallback using JavaScript instead of SQL to avoid "id" column error
+      method = {
+        type: 'legacy',
+        requires_network: false,
+        requires_memo: false,
+        requires_address: false,
+        requires_account_details: true
+      };
+    } else {
+      method = methodRes.rows[0];
     }
 
-    const method = methodRes.rows[0];
     const isCrypto = method.type === 'crypto';
     const isLegacy = method.type === 'legacy';
 
@@ -126,7 +131,7 @@ const requestWithdrawal = async (req, res) => {
 
     const finalAccountDetails = `${baseAccountDetails}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})]`.trim();
 
-    // 🔥 5. Insert Withdrawal (With qr_code_url parameter)
+    // 5. Insert Withdrawal (With qr_code_url parameter)
     const withdrawalResult = await client.query(
       `INSERT INTO withdrawals (
         user_id, amount, payment_method, account_details, 
