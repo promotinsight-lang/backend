@@ -39,15 +39,16 @@ const getAllPaymentMethods = async (req, res) => {
 const updatePaymentMethod = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, active } = req.body;
+    const { name, description, active, qr_code_url } = req.body;
 
     const updateResult = await pool.query(
       `UPDATE payment_methods 
        SET name = COALESCE($1, name), 
            description = COALESCE($2, description),
-           active = COALESCE($3, active)
-       WHERE id = $4 RETURNING *`,
-      [name, description, active, id]
+           active = COALESCE($3, active),
+           qr_code_url = COALESCE($4, qr_code_url)
+       WHERE id = $5 RETURNING *`,
+      [name, description, active, qr_code_url, id]
     );
 
     if (updateResult.rows.length === 0) {
