@@ -1,23 +1,86 @@
 const pool = require("../config/db");
 
 // ==========================================
-// 💸 Request Withdrawal (Buyer/Seller) - 🔥 SECURED TRANSACTION WITH DYNAMIC % FEE
+// 💸 Request Withdrawal (Buyer/Seller) - 🔥 SECURED TRANSACTION WITH DYNAMIC % FEE & CRYPTO SUPPORT
 // ==========================================
 const requestWithdrawal = async (req, res) => {
   const client = await pool.connect();
   try {
     const userId = req.user.id;
-    const { amount, payment_method, account_details } = req.body;
+    const { 
+      amount, 
+      payment_method, 
+      account_details,
+      crypto_address,
+      crypto_network,
+      crypto_memo 
+    } = req.body;
+    
     const amountValue = parseFloat(amount);
 
-    // Strict input validation
-    if (!amountValue || amountValue <= 0 || !payment_method || !account_details) {
-      return res.status(400).json({ success: false, message: "Valid amount, payment_method, and account_details are required" });
+    // Strict input validation (amount & payment_method are always required)
+    if (!amountValue || amountValue <= 0 || !payment_method) {
+      return res.status(400).json({ success: false, message: "Valid amount and payment_method are required" });
     }
 
     await client.query('BEGIN');
 
-   // 1. Lock user's wallet to prevent concurrent double-spending
+    // 🔥 1. Fetch Payment Method Details (Support new Multi-Method + Legacy)
+    const methodRes = await client.query(
+      `SELECT * FROM payment_methods WHERE LOWER(name) = LOWER($1)
+       UNION ALL
+       SELECT id, $1::text as name, 'legacy' as type, FALSE as requires_network, FALSE as requires_memo, TRUE as requires_address, TRUE as requires_account_details, NULL as example_address, NULL as example_network, NULL as example_memo, TRUE as active
+       WHERE NOT EXISTS (SELECT 1 FROM payment_methods WHERE LOWER(name) = LOWER($1))`,
+      [payment_method]
+    );
+
+    if (methodRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: "Payment method not found" });
+    }
+
+    const method = methodRes.rows[0];
+    const isCrypto = method.type === 'crypto';
+    const isLegacy = method.type === 'legacy';
+
+    // 🔥 2. Validate fields based on method type
+    let finalCryptoAddress = null;
+    let finalCryptoNetwork = null;
+    let finalCryptoMemo = null;
+    let baseAccountDetails = '';
+
+    if (isLegacy) {
+      if (!account_details) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: "Account details are required" });
+      }
+      baseAccountDetails = account_details.trim();
+    } else if (isCrypto) {
+      if (!crypto_address) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: "Wallet address is required for Crypto" });
+      }
+      if (method.requires_network && !crypto_network) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: "Network selection is required" });
+      }
+      if (method.requires_memo && !crypto_memo) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: "Memo/Tag is required" });
+      }
+      finalCryptoAddress = crypto_address.trim();
+      finalCryptoNetwork = crypto_network ? crypto_network.trim() : null;
+      finalCryptoMemo = crypto_memo ? crypto_memo.trim() : null;
+      baseAccountDetails = account_details ? account_details.trim() : ''; 
+    } else {
+      if (method.requires_account_details && !account_details) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: `${payment_method} requires account details` });
+      }
+      baseAccountDetails = account_details ? account_details.trim() : '';
+    }
+
+    // 3. Lock user's wallet to prevent concurrent double-spending
     const userResult = await client.query(
       "SELECT wallet_balance, role, amazon_location, ip_location FROM users WHERE id = $1 FOR UPDATE",
       [userId]
@@ -28,7 +91,7 @@ const requestWithdrawal = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // 🔥 CRITICAL BUG FIX: NULL থাকলে 0 ধরে নিতে হবে, নাহলে parseFloat(null) = NaN হয়ে সিকিউরিটি বাইপাস হয়ে যাবে
+    // CRITICAL BUG FIX: NULL থাকলে 0 ধরে নিতে হবে
     const currentBalance = parseFloat(userResult.rows[0].wallet_balance || 0);
 
     // ব্যালেন্স চেক
@@ -39,7 +102,7 @@ const requestWithdrawal = async (req, res) => {
 
     const userCountry = userResult.rows[0].amazon_location || userResult.rows[0].ip_location || 'Local';
 
-    // 🔥 2. DYNAMIC WITHDRAWAL FEE & LOCAL CURRENCY CALCULATION
+    // 🔥 4. DYNAMIC WITHDRAWAL FEE & LOCAL CURRENCY CALCULATION
     const feeConfig = await client.query(
       "SELECT seller_withdrawal_fee, exchange_rate FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) LIMIT 1",
       [userCountry]
@@ -63,23 +126,28 @@ const requestWithdrawal = async (req, res) => {
     const netPayable = amountValue - feeAmount;
     const localNetPayable = (netPayable * exchangeRate).toFixed(2);
 
-    // 3. Deduct total requested amount from wallet (🔥 COALESCE added for extra DB safety)
+    // 5. Deduct total requested amount from wallet
     await client.query(
       "UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) - $1 WHERE id = $2",
       [amountValue, userId]
     );
 
-    // 🔥 SMART TRICK: Append fee breakdown and dual currency to account_details so Admin sees exactly what to pay
-    const finalAccountDetails = `${account_details.trim()}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})]`;
+    // 🔥 SMART TRICK: Append fee breakdown to account_details
+    const finalAccountDetails = `${baseAccountDetails}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})]`.trim();
 
-    // 4. Insert withdrawal request
+    // 6. Insert withdrawal request with new Crypto & Legacy fields
     const withdrawalResult = await client.query(
-      `INSERT INTO withdrawals (user_id, amount, payment_method, account_details, status)
-       VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
-      [userId, amountValue, payment_method.trim(), finalAccountDetails]
+      `INSERT INTO withdrawals (
+        user_id, amount, payment_method, account_details, 
+        crypto_address, crypto_network, crypto_memo, is_crypto, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
+      [
+        userId, amountValue, payment_method.trim(), finalAccountDetails, 
+        finalCryptoAddress, finalCryptoNetwork, finalCryptoMemo, isCrypto
+      ]
     );
 
-    // 5. Log the transaction securely
+    // 7. Log the transaction securely
     await client.query(
         "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'withdrawal', $3, 'pending')",
         [userId, amountValue, `Withdrawal requested. Fee deducted: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})`]
@@ -237,7 +305,7 @@ const rejectWithdrawal = async (req, res) => {
       [withdrawalId]
     );
 
-    // 2. Refund money back to user's wallet safely (🔥 COALESCE added for extra DB safety)
+    // 2. Refund money back to user's wallet safely
     await client.query(
       "UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2",
       [withdrawal.amount, withdrawal.user_id]

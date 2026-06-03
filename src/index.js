@@ -2,8 +2,8 @@ console.log("✅ PRODUCT ROUTES MOUNTED at /api/products");
 console.log("🔥🔥🔥 NEW SECURE SERVER RUNNING 🔥🔥🔥");
 
 const express = require("express");
-const http = require("http"); // 🔥 NEW: http module import kora holo
-const { Server } = require("socket.io"); // 🔥 NEW: socket.io theke Server import kora holo
+const http = require("http"); 
+const { Server } = require("socket.io"); 
 const cors = require("cors");
 const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
@@ -17,12 +17,12 @@ app.set('trust proxy', 1);
 // ==========================================
 // 📡 CREATE HTTP SERVER & INIT SOCKET.IO
 // ==========================================
-const server = http.createServer(app); // 🔥 NEW: Express app ke HTTP server er sathe connect kora holo
+const server = http.createServer(app); 
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5173", // Only allow your frontend
+    origin: process.env.CLIENT_URL || "http://localhost:5173", 
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    credentials: true // MUST BE TRUE
+    credentials: true 
   }
 });
 
@@ -30,11 +30,11 @@ const io = new Server(server, {
 // 🛡️ ENTERPRISE-GRADE SECURITY MIDDLEWARES
 // ==========================================
 
-// 1. Set Security HTTP Headers (Blocks Clickjacking, Sniffing, etc.)
+// 1. Set Security HTTP Headers
 app.use(helmet());
-app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" })); // Allows safe cross-origin image loading
+app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" })); 
 
-// 2. CORS Setup (Strict Origins & Credentials)
+// 2. CORS Setup
 app.use(cors({
     origin: ['http://localhost:5173', 'https://promotinsight.com', 'https://www.promotinsight.com'], 
     credentials: true,
@@ -42,17 +42,17 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// 3. Body Parser with Payload Limits (Prevents DoS via large payloads)
+// 3. Body Parser
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
 
-// 4. Cookie Parser (🔥 REQUIRED for reading HttpOnly JWT cookies)
+// 4. Cookie Parser
 app.use(cookieParser());
 
-// 6. Global Rate Limiting (Defense in Depth Fallback)
+// 6. Global Rate Limiting
 const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 1000, // Limit each IP to 1000 total requests
+    windowMs: 15 * 60 * 1000, 
+    max: 1000, 
     message: { success: false, message: "Too many requests from this IP, please try again later." },
     standardHeaders: true,
     legacyHeaders: false,
@@ -72,23 +72,17 @@ let activeUsers = {};
 io.on('connection', (socket) => {
   console.log('🟢 New user connected via Socket:', socket.id);
 
-  // User jokhon kono page e jabe
   socket.on('page_change', (data) => {
     activeUsers[socket.id] = {
       page: data.page,
       timestamp: new Date()
     };
-    
-    // Admin der ke updated count pathano
     io.emit('active_users_update', Object.keys(activeUsers).length);
   });
 
-  // User jokhon ber hoye jabe
   socket.on('disconnect', () => {
     console.log('🔴 User disconnected:', socket.id);
     delete activeUsers[socket.id];
-    
-    // Admin der ke updated count pathano
     io.emit('active_users_update', Object.keys(activeUsers).length);
   });
 });
@@ -105,10 +99,13 @@ const appealRoutes = require("./routes/appealRoutes");
 const supportRoutes = require("./routes/supportRoutes"); 
 const announcementRoutes = require("./routes/announcementRoutes"); 
 const blogRoutes = require("./routes/blogRoutes"); 
-// 🔥 NEW: Fee Configuration Routes import kora holo
 const feeConfigRoutes = require("./routes/feeConfigRoutes");
 const verificationConfigRoutes = require("./routes/verificationConfigRoutes");
 
+// 🔥 NEW: Payment Method Routes Import
+const paymentMethodRoutes = require("./routes/paymentMethodRoutes");
+
+// Mount Routes
 app.use("/api/users", userRoutes); 
 app.use("/api/products", productRoutes); 
 app.use("/api/applications", applicationRoutes);
@@ -118,9 +115,11 @@ app.use("/api/appeals", appealRoutes);
 app.use("/api/support", supportRoutes); 
 app.use("/api/announcements", announcementRoutes); 
 app.use("/api/blogs", blogRoutes); 
-// 🔥 NEW: Fee Configuration API route mount kora holo
 app.use("/api/config/fees", feeConfigRoutes);
 app.use("/api/config/verification", verificationConfigRoutes);
+
+// 🔥 NEW: Payment Method Routes Mount
+app.use("/api/payment-methods", paymentMethodRoutes);
 
 // ==========================================
 // 🌐 HEALTH CHECK & ERROR HANDLING
@@ -160,7 +159,6 @@ startCronJobs();
 // ==========================================
 const PORT = process.env.PORT || 5000;
 
-// 🔥 CHANGED: app.listen er bodole server.listen kora hoyeche
 server.listen(PORT, () => {
   console.log(`🚀 Secure Enterprise Server running on port ${PORT}`);
   console.log(`📡 Socket.io is ready for real-time tracking!`);
