@@ -1,32 +1,26 @@
 const pool = require("../config/db");
 
 // ==========================================
-// 💸 Request Withdrawal (Buyer/Seller) - 🔥 SECURED TRANSACTION WITH DYNAMIC % FEE & CRYPTO SUPPORT
+// 💸 Request Withdrawal (Buyer/Seller) - 🔥 SECURED TRANSACTION WITH CRYPTO & QR SUPPORT
 // ==========================================
 const requestWithdrawal = async (req, res) => {
   const client = await pool.connect();
   try {
     const userId = req.user.id;
     const { 
-      amount, 
-      payment_method, 
-      account_details,
-      crypto_address,
-      crypto_network,
-      crypto_memo,
-      qr_code_url
+      amount, payment_method, account_details,
+      crypto_address, crypto_network, crypto_memo, qr_code_url 
     } = req.body;
     
     const amountValue = parseFloat(amount);
 
-    // Strict input validation (amount & payment_method are always required)
     if (!amountValue || amountValue <= 0 || !payment_method) {
       return res.status(400).json({ success: false, message: "Valid amount and payment_method are required" });
     }
 
     await client.query('BEGIN');
 
-    // 🔥 1. Fetch Payment Method Details (Support new Multi-Method + Legacy)
+    // 1. Fetch Payment Method Details (Support Crypto & Fiat)
     const methodRes = await client.query(
       `SELECT * FROM payment_methods WHERE LOWER(name) = LOWER($1)
        UNION ALL
@@ -44,12 +38,12 @@ const requestWithdrawal = async (req, res) => {
     const isCrypto = method.type === 'crypto';
     const isLegacy = method.type === 'legacy';
 
-    // 🔥 2. Validate fields based on method type
     let finalCryptoAddress = null;
     let finalCryptoNetwork = null;
     let finalCryptoMemo = null;
     let baseAccountDetails = '';
 
+    // Validate Input based on Method Type
     if (isLegacy) {
       if (!account_details) {
         await client.query('ROLLBACK');
@@ -57,9 +51,9 @@ const requestWithdrawal = async (req, res) => {
       }
       baseAccountDetails = account_details.trim();
     } else if (isCrypto) {
-      if (!crypto_address) {
+      if (method.requires_address && !crypto_address) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ success: false, message: "Wallet address is required for Crypto" });
+        return res.status(400).json({ success: false, message: "Wallet address is required" });
       }
       if (method.requires_network && !crypto_network) {
         await client.query('ROLLBACK');
@@ -69,7 +63,7 @@ const requestWithdrawal = async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(400).json({ success: false, message: "Memo/Tag is required" });
       }
-      finalCryptoAddress = crypto_address.trim();
+      finalCryptoAddress = crypto_address ? crypto_address.trim() : null;
       finalCryptoNetwork = crypto_network ? crypto_network.trim() : null;
       finalCryptoMemo = crypto_memo ? crypto_memo.trim() : null;
       baseAccountDetails = account_details ? account_details.trim() : ''; 
@@ -81,7 +75,7 @@ const requestWithdrawal = async (req, res) => {
       baseAccountDetails = account_details ? account_details.trim() : '';
     }
 
-    // 3. Lock user's wallet to prevent concurrent double-spending
+    // 2. Lock user's wallet
     const userResult = await client.query(
       "SELECT wallet_balance, role, amazon_location, ip_location FROM users WHERE id = $1 FOR UPDATE",
       [userId]
@@ -92,31 +86,28 @@ const requestWithdrawal = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // CRITICAL BUG FIX: NULL থাকলে 0 ধরে নিতে হবে
     const currentBalance = parseFloat(userResult.rows[0].wallet_balance || 0);
 
-    // ব্যালেন্স চেক
     if (currentBalance < amountValue) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: "Insufficient wallet balance. You cannot withdraw more than you have." });
+      return res.status(400).json({ success: false, message: "Insufficient wallet balance." });
     }
 
     const userCountry = userResult.rows[0].amazon_location || userResult.rows[0].ip_location || 'Local';
 
-    // 🔥 4. DYNAMIC WITHDRAWAL FEE & LOCAL CURRENCY CALCULATION
+    // 3. Calculate Dynamic Fees
     const feeConfig = await client.query(
       "SELECT seller_withdrawal_fee, exchange_rate FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) LIMIT 1",
       [userCountry]
     );
     
-    let feePercent = 0.0; // Default 0%
+    let feePercent = 0.0;
     let exchangeRate = 1;
 
     if (feeConfig.rows.length > 0) {
         feePercent = parseFloat(feeConfig.rows[0].seller_withdrawal_fee || 0) / 100;
         exchangeRate = parseFloat(feeConfig.rows[0].exchange_rate || 1);
     } else {
-        // Fallback to default if country not found
         const defaultFeeConfig = await client.query("SELECT seller_withdrawal_fee FROM dynamic_fees_config LIMIT 1");
         if (defaultFeeConfig.rows.length > 0) {
             feePercent = parseFloat(defaultFeeConfig.rows[0].seller_withdrawal_fee || 0) / 100;
@@ -127,16 +118,15 @@ const requestWithdrawal = async (req, res) => {
     const netPayable = amountValue - feeAmount;
     const localNetPayable = (netPayable * exchangeRate).toFixed(2);
 
-    // 5. Deduct total requested amount from wallet
+    // 4. Deduct Wallet Balance
     await client.query(
       "UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) - $1 WHERE id = $2",
       [amountValue, userId]
     );
 
-    // 🔥 SMART TRICK: Append fee breakdown to account_details
     const finalAccountDetails = `${baseAccountDetails}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})]`.trim();
 
-    // 6. Insert withdrawal request with new Crypto, Legacy & QR fields
+    // 🔥 5. Insert Withdrawal (With qr_code_url parameter)
     const withdrawalResult = await client.query(
       `INSERT INTO withdrawals (
         user_id, amount, payment_method, account_details, 
@@ -148,22 +138,22 @@ const requestWithdrawal = async (req, res) => {
       ]
     );
 
-    // 7. Log the transaction securely
+    // 6. Log transaction
     await client.query(
         "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'withdrawal', $3, 'pending')",
-        [userId, amountValue, `Withdrawal requested. Fee deducted: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})`]
+        [userId, amountValue, `Withdrawal requested. Fee: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)} USD`]
     );
 
     await client.query('COMMIT');
 
     res.status(201).json({
       success: true,
-      message: `Withdrawal request submitted successfully. Net to receive: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})`,
+      message: `Withdrawal request submitted successfully. Net to receive: $${netPayable.toFixed(2)} USD`,
       data: withdrawalResult.rows[0]
     });
 
   } catch (error) {
-    try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+    try { await client.query('ROLLBACK'); } catch (_) { }
     console.error("REQUEST WITHDRAWAL ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
   } finally {
@@ -177,17 +167,8 @@ const requestWithdrawal = async (req, res) => {
 const getMyWithdrawals = async (req, res) => {
   try {
     const userId = req.user.id;
-
-    const result = await pool.query(
-      "SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC",
-      [userId]
-    );
-
-    res.status(200).json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows
-    });
+    const result = await pool.query("SELECT * FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC", [userId]);
+    res.status(200).json({ success: true, count: result.rows.length, data: result.rows });
   } catch (error) {
     console.error("GET MY WITHDRAWALS ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -205,12 +186,7 @@ const getAllWithdrawals = async (req, res) => {
        JOIN users u ON w.user_id = u.id
        ORDER BY w.created_at DESC`
     );
-
-    res.status(200).json({
-      success: true,
-      count: result.rows.length,
-      data: result.rows
-    });
+    res.status(200).json({ success: true, count: result.rows.length, data: result.rows });
   } catch (error) {
     console.error("GET ALL WITHDRAWALS ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -218,7 +194,7 @@ const getAllWithdrawals = async (req, res) => {
 };
 
 // ==========================================
-// 👑 Approve Withdrawal (Admin) - 🔥 SECURED TRANSACTION
+// 👑 Approve Withdrawal (Admin)
 // ==========================================
 const approveWithdrawal = async (req, res) => {
   const client = await pool.connect();
@@ -228,16 +204,13 @@ const approveWithdrawal = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Lock withdrawal record to prevent duplicate approvals/rejections
     const checkResult = await client.query("SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE", [withdrawalId]);
-    
     if (checkResult.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ success: false, message: "Withdrawal not found" });
     }
     
     const withdrawal = checkResult.rows[0];
-
     if (withdrawal.status !== 'pending') {
       await client.query('ROLLBACK');
       return res.status(400).json({ success: false, message: "Only pending requests can be approved" });
@@ -246,25 +219,18 @@ const approveWithdrawal = async (req, res) => {
     const safeTxId = transaction_id ? transaction_id.trim() : null;
     const safeUrl = screenshot_url ? screenshot_url.trim() : null;
 
-    // Update status to approved AND save payment proofs
     const updateResult = await client.query(
       "UPDATE withdrawals SET status = 'approved', transaction_id = $2, screenshot_url = $3 WHERE id = $1 RETURNING *",
       [withdrawalId, safeTxId, safeUrl]
     );
 
-    // Log the transaction as completed
     await client.query(
         "UPDATE transactions SET status = 'completed' WHERE user_id = $1 AND amount = $2 AND type = 'withdrawal' AND status = 'pending'",
         [withdrawal.user_id, withdrawal.amount]
     );
 
     await client.query('COMMIT');
-
-    res.status(200).json({
-      success: true,
-      message: "Withdrawal approved successfully.",
-      data: updateResult.rows[0]
-    });
+    res.status(200).json({ success: true, message: "Withdrawal approved successfully.", data: updateResult.rows[0] });
 
   } catch (error) {
     await client.query('ROLLBACK');
@@ -276,7 +242,7 @@ const approveWithdrawal = async (req, res) => {
 };
 
 // ==========================================
-// 👑 Reject Withdrawal (Admin) - 🔥 SECURED TRANSACTION
+// 👑 Reject Withdrawal (Admin)
 // ==========================================
 const rejectWithdrawal = async (req, res) => {
   const client = await pool.connect();
@@ -285,46 +251,32 @@ const rejectWithdrawal = async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Lock the withdrawal record to prevent concurrent actions
     const checkResult = await client.query("SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE", [withdrawalId]);
-    
     if (checkResult.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ success: false, message: "Withdrawal not found" });
     }
     
     const withdrawal = checkResult.rows[0];
-    
     if (withdrawal.status !== 'pending') {
       await client.query('ROLLBACK');
       return res.status(400).json({ success: false, message: "Only pending requests can be rejected" });
     }
 
-    // 1. Update status to rejected
-    const updateResult = await client.query(
-      "UPDATE withdrawals SET status = 'rejected' WHERE id = $1 RETURNING *",
-      [withdrawalId]
-    );
+    const updateResult = await client.query("UPDATE withdrawals SET status = 'rejected' WHERE id = $1 RETURNING *", [withdrawalId]);
 
-    // 2. Refund money back to user's wallet safely
     await client.query(
       "UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2",
       [withdrawal.amount, withdrawal.user_id]
     );
 
-    // 3. Log the refund transaction
     await client.query(
         "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
         [withdrawal.user_id, withdrawal.amount, `Refund for rejected withdrawal request ID: ${withdrawalId}`]
     );
 
     await client.query('COMMIT');
-
-    res.status(200).json({
-      success: true,
-      message: "Withdrawal rejected. Money refunded to user's wallet.",
-      data: updateResult.rows[0]
-    });
+    res.status(200).json({ success: true, message: "Withdrawal rejected. Money refunded.", data: updateResult.rows[0] });
 
   } catch (error) {
     await client.query('ROLLBACK');
@@ -335,10 +287,4 @@ const rejectWithdrawal = async (req, res) => {
   }
 };
 
-module.exports = {
-  requestWithdrawal,
-  getMyWithdrawals,
-  getAllWithdrawals,
-  approveWithdrawal,
-  rejectWithdrawal
-};
+module.exports = { requestWithdrawal, getMyWithdrawals, getAllWithdrawals, approveWithdrawal, rejectWithdrawal };
