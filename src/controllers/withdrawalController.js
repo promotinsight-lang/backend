@@ -13,7 +13,8 @@ const requestWithdrawal = async (req, res) => {
       account_details,
       crypto_address,
       crypto_network,
-      crypto_memo 
+      crypto_memo,
+      qr_code_url
     } = req.body;
     
     const amountValue = parseFloat(amount);
@@ -135,15 +136,15 @@ const requestWithdrawal = async (req, res) => {
     // 🔥 SMART TRICK: Append fee breakdown to account_details
     const finalAccountDetails = `${baseAccountDetails}\n[SYSTEM CALCULATION -> Gross: $${amountValue.toFixed(2)} | Fee: $${feeAmount.toFixed(2)} (${(feePercent * 100).toFixed(1)}%) | Net Payable: $${netPayable.toFixed(2)} USD (~${localNetPayable} ${userCountry})]`.trim();
 
-    // 6. Insert withdrawal request with new Crypto & Legacy fields
+    // 6. Insert withdrawal request with new Crypto & Legacy & QR fields
     const withdrawalResult = await client.query(
       `INSERT INTO withdrawals (
         user_id, amount, payment_method, account_details, 
-        crypto_address, crypto_network, crypto_memo, is_crypto, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING *`,
+        crypto_address, crypto_network, crypto_memo, qr_code_url, is_crypto, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending') RETURNING *`,
       [
         userId, amountValue, payment_method.trim(), finalAccountDetails, 
-        finalCryptoAddress, finalCryptoNetwork, finalCryptoMemo, isCrypto
+        finalCryptoAddress, finalCryptoNetwork, finalCryptoMemo, qr_code_url || null, isCrypto
       ]
     );
 
