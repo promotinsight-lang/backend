@@ -883,22 +883,42 @@ const getPaymentSettings = async (req, res) => {
 };
 
 // ==========================================
-// 💳 Deposit Funds
+// 💳 Deposit Funds (Updated with Screenshot & User Data)
 // ==========================================
 const depositFunds = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { amount, payment_method, transaction_id } = req.body;
+    
+    // 🔥 UPDATE: Frontend থেকে আসা সব ডাটা রিসিভ করা হচ্ছে
+    const { 
+      amount, payment_method, transaction_id, 
+      screenshot_url, account_details, crypto_address, crypto_network, crypto_memo 
+    } = req.body;
+    
     const amountValue = Number(amount);
 
     if (!amountValue || amountValue <= 0 || !payment_method || !transaction_id || !transaction_id.trim()) {
       return res.status(400).json({ success: false, message: "Valid amount, payment method, and transaction ID are required" });
     }
 
+    // 🔥 UPDATE: ডাটাবেসে ছবি এবং সেলারের অন্যান্য ইনপুট ডাটা সেভ করা হচ্ছে
     const result = await pool.query(
-      `INSERT INTO deposits (user_id, amount, payment_method, transaction_id, status)
-       VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
-      [userId, amountValue, payment_method.trim(), transaction_id.trim()]
+      `INSERT INTO deposits 
+        (user_id, amount, payment_method, transaction_id, screenshot_url, account_details, crypto_address, crypto_network, crypto_memo, status)
+       VALUES 
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending') 
+       RETURNING *`,
+      [
+        userId, 
+        amountValue, 
+        payment_method.trim(), 
+        transaction_id.trim(),
+        screenshot_url ? screenshot_url.trim() : null,
+        account_details ? account_details.trim() : null,
+        crypto_address ? crypto_address.trim() : null,
+        crypto_network ? crypto_network.trim() : null,
+        crypto_memo ? crypto_memo.trim() : null
+      ]
     );
 
     res.status(201).json({
