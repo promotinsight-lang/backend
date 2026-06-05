@@ -1,6 +1,14 @@
 const pool = require("../config/db");
-const cloudinary = require("cloudinary").v2; // 🔥 ক্লাউডিনারি যুক্ত করা হলো
+const cloudinary = require("cloudinary").v2;
 
+// 🔥 এই কনফিগারেশন ব্লকটি যোগ করুন
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// ... আপনার বাকি কোড নিচে যেমন ছিল তেমনই থাকবে ...
 // ==========================================
 // 🛡️ Create a New Blog Post (ADMIN)
 // ==========================================
