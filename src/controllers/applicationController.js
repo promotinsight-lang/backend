@@ -159,7 +159,7 @@ const applyToProduct = async (req, res) => {
 
     if (existing.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ message: "Already applied" });
+      return res.status(400).json({ message: "Already applied Please go to My Orders" });
     }
 
     const result = await client.query(
