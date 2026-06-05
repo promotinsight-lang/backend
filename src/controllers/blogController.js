@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const cloudinary = require("cloudinary").v2; // 🔥 ক্লাউডিনারি যুক্ত করা হলো
 
 // ==========================================
 // 🛡️ Create a New Blog Post (ADMIN)
@@ -21,10 +22,33 @@ const createBlog = async (req, res) => {
     }
 
     let image_url = null;
+
+    // 🔥 Cloudinary-তে ছবি আপলোডের লজিক
     if (req.file) {
-      image_url = `https://backend-6aiq.onrender.com/uploads/${req.file.filename}`;
+      try {
+        const uploadResult = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            {
+              folder: "promotinsight/blogs", // Cloudinary-তে এই ফোল্ডারে ছবি সেভ হবে
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          // Multer memory storage থেকে পাওয়া বাফার পাঠানো হচ্ছে
+          uploadStream.end(req.file.buffer); 
+        });
+
+        // আপলোড সফল হলে Cloudinary-র ডিরেক্ট URL সেভ করে নেওয়া হচ্ছে
+        image_url = uploadResult.secure_url;
+      } catch (uploadError) {
+        console.error("CLOUDINARY UPLOAD ERROR:", uploadError);
+        return res.status(500).json({ success: false, message: "Failed to upload image to Cloudinary." });
+      }
     }
 
+    // ডেটাবেজে সেভ করা (URL সহ)
     const result = await pool.query(
       `INSERT INTO blogs (title, slug, content, image_url, author_name, is_published) 
        VALUES ($1, $2, $3, $4, $5, COALESCE($6, true)) RETURNING *`,

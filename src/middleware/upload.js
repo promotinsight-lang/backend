@@ -1,18 +1,13 @@
 const multer = require("multer");
-const path = require("path");
 
-// Configure storage for uploaded images
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Make sure an 'uploads' folder exists in your root directory
-  },
-  filename: (req, file, cb) => {
-    // Generate a unique filename using the current timestamp
-    cb(null, `blog-${Date.now()}${path.extname(file.originalname)}`);
-  }
-});
+// Configure memory storage instead of disk storage
+// এর ফলে ফাইল লোকাল হার্ডডিস্কে সেভ হবে না, সরাসরি বাফার (Buffer) হিসেবে মেমোরিতে থাকবে
+const storage = multer.memoryStorage();
 
 // Create the upload middleware
-const upload = multer({ storage });
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 } // Optional: Max file size set to 5MB
+});
 
 module.exports = upload;
