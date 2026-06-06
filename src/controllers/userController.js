@@ -196,8 +196,8 @@ const sendRegistrationOtp = async (req, res) => {
       expires: Date.now() + 10 * 60000
     });
 
-    const { data, error } = await resend.emails.send({
-      from: 'PromotInsight <security@promotinsight.com>',
+   const { data, error } = await resend.emails.send({
+      from: 'PromotInsight Security <security@promotinsight.com>',
       to: emailTrimmed,
       subject: "Your Registration Verification Code",
       html: `
@@ -1049,7 +1049,7 @@ const forgotPassword = async (req, res) => {
     const resetLink = `https://promotinsight.com/reset-password/${user.id}/${token}`;
 
     const { data, error } = await resend.emails.send({
-      from: 'PromotInsight <security@promotinsight.com>',
+      from: 'PromotInsight <noreply@promotinsight.com>',
       to: user.email,
       subject: "Security Alert: Password Reset Request",
       html: `
