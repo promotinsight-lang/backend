@@ -1,7 +1,8 @@
 const pool = require("../config/db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 const crypto = require("crypto");
 const svgCaptcha = require("svg-captcha"); 
 const axios = require("axios"); // 🔥 NEW: Axios for API calls
@@ -195,21 +196,8 @@ const sendRegistrationOtp = async (req, res) => {
       expires: Date.now() + 10 * 60000
     });
 
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true, 
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      },
-      tls: {
-        rejectUnauthorized: false 
-      }
-    });
-
-    const mailOptions = {
-      from: `"PromotInsight Security" <${process.env.EMAIL_USER}>`,
+    const { data, error } = await resend.emails.send({
+      from: 'PromotInsight <security@promotinsight.com>',
       to: emailTrimmed,
       subject: "Your Registration Verification Code",
       html: `
@@ -224,9 +212,12 @@ const sendRegistrationOtp = async (req, res) => {
           </div>
         </div>
       `
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (error) {
+      console.error("RESEND OTP ERROR:", error);
+      return res.status(500).json({ success: false, message: "Failed to send verification code" });
+    }
     res.status(200).json({ success: true, message: "Verification code sent to your email" });
 
   } catch (error) {
@@ -1055,18 +1046,10 @@ const forgotPassword = async (req, res) => {
     const user = userResult.rows[0];
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '15m' });
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+    const resetLink = `https://promotinsight.com/reset-password/${user.id}/${token}`;
 
-    const resetLink = `http://promotinsight.com/reset-password/${user.id}/${token}`;
-
-    const mailOptions = {
-      from: `"PromotInsight Security" <${process.env.EMAIL_USER}>`,
+    const { data, error } = await resend.emails.send({
+      from: 'PromotInsight <security@promotinsight.com>',
       to: user.email,
       subject: "Security Alert: Password Reset Request",
       html: `
@@ -1079,9 +1062,12 @@ const forgotPassword = async (req, res) => {
           </div>
         </div>
       `
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (error) {
+      console.error("RESEND FORGOT PASS ERROR:", error);
+      return res.status(500).json({ success: false, message: "Failed to send reset link." });
+    }
     res.status(200).json({ success: true, message: "Reset link sent successfully." });
 
   } catch (error) {
@@ -1128,20 +1114,10 @@ const sendContactEmail = async (req, res) => {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
 
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
-
-    const mailOptions = {
-      from: `"${name}" <${process.env.EMAIL_USER}>`, 
+    const { data, error } = await resend.emails.send({
+      from: 'PromotInsight Support <support@promotinsight.com>',
       replyTo: email, 
-      to: process.env.EMAIL_USER, 
+      to: 'promotinsight@gmail.com', // Ei email e apni support message gulo paben
       subject: `New Support Request from ${name}`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
@@ -1155,9 +1131,12 @@ const sendContactEmail = async (req, res) => {
           </div>
         </div>
       `
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
+    if (error) {
+      console.error("RESEND CONTACT ERROR:", error);
+      return res.status(500).json({ success: false, message: "Failed to send message" });
+    }
     res.status(200).json({ success: true, message: "Message sent successfully" });
 
   } catch (error) {
