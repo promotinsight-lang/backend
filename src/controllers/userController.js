@@ -1117,6 +1117,55 @@ const resetPassword = async (req, res) => {
   }
 };
 
+// ==========================================
+// 📧 Receive Contact Support Message (🔥 NEW FUNCTION ADDED)
+// ==========================================
+const sendContactEmail = async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
+
+    if (!name || !email || !message) {
+      return res.status(400).json({ success: false, message: "All fields are required" });
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+
+    const mailOptions = {
+      from: `"${name}" <${process.env.EMAIL_USER}>`, 
+      replyTo: email, 
+      to: process.env.EMAIL_USER, 
+      subject: `New Support Request from ${name}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #ffffff; padding: 30px; border-radius: 10px; max-width: 600px; border-top: 5px solid #0066ff;">
+            <h2 style="color: #333;">New Support Request</h2>
+            <p><strong>Name:</strong> ${name}</p>
+            <p><strong>Email:</strong> ${email}</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p><strong>Message:</strong></p>
+            <p style="background: #f9f9f9; padding: 15px; border-radius: 5px; color: #555;">${message}</p>
+          </div>
+        </div>
+      `
+    };
+
+    await transporter.sendMail(mailOptions);
+    res.status(200).json({ success: true, message: "Message sent successfully" });
+
+  } catch (error) {
+    console.error("SUPPORT EMAIL ERROR:", error);
+    res.status(500).json({ success: false, message: "Failed to send message" });
+  }
+};
+
 module.exports = {
   getPublicLiveFeed,      
   generateCaptcha,        
@@ -1139,5 +1188,6 @@ module.exports = {
   submitVerification,
   getAllUsersByRole,
   updateUserStatus,
-  getAdminUserDetailsById 
+  getAdminUserDetailsById,
+  sendContactEmail // 🔥 EXPORTED NEW FUNCTION
 };

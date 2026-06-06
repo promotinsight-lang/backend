@@ -11,7 +11,7 @@ const {
   socialLogin, 
   logoutUser, 
   getUserProfile,
-  updateUserName, // 🔥 IMPORTED
+  updateUserName, 
   depositFunds,
   getMyDeposits,
   getPaymentSettings,
@@ -24,12 +24,13 @@ const {
   submitVerification,
   getAllUsersByRole,
   updateUserStatus,
-  getAdminUserDetailsById
+  getAdminUserDetailsById,
+  sendContactEmail // 🔥 NEW IMPORT
 } = require("../controllers/userController");
 
 const { protect } = require("../middleware/authMiddleware");
 const authorize = require("../middleware/roleMiddleware");
-const { blockVPNAndProxy } = require("../middleware/vpnCheck"); // 🔥 IMPORTED VPN CHECKER
+const { blockVPNAndProxy } = require("../middleware/vpnCheck");
 
 // ==========================================
 // 🛡️ Rate Limiters (Defense in Depth)
@@ -75,7 +76,6 @@ router.get("/live-feed", getPublicLiveFeed);
 router.get("/captcha", generateCaptcha);
 router.post("/send-otp", otpLimiter, sendRegistrationOtp);
 
-// 🔥 VPN CHECKER ADDED TO SENSITIVE ROUTES
 router.post("/register", blockVPNAndProxy, authLimiter, registerUser);
 router.post("/login", blockVPNAndProxy, authLimiter, loginUser);
 router.post("/social-login", blockVPNAndProxy, authLimiter, socialLogin);
@@ -86,11 +86,16 @@ router.post("/forgot-password", passwordResetLimiter, forgotPassword);
 router.patch("/reset-password/:id/:token", passwordResetLimiter, resetPassword);
 
 // ==========================
+// 📧 Support & Contact Route (🔥 NEW ROUTE)
+// ==========================
+router.post("/contact-support", sendContactEmail);
+
+// ==========================
 // 👤 User Profile & Verification
 // ==========================
 router.get("/profile", protect, getUserProfile);
 router.post("/verify", protect, submitVerification);
-router.patch("/profile/name", protect, updateUserName); // 🔥 EDIT NAME ROUTE ADDED
+router.patch("/profile/name", protect, updateUserName);
 
 // ==========================
 // 💳 Financial & Settings Routes
