@@ -10,7 +10,7 @@ const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const pool = require("./config/db");
 require("dotenv").config();
-
+const privateChatRoutes = require('./routes/privateChatRoutes');
 const app = express();
 app.set('trust proxy', 1);
 
@@ -68,10 +68,15 @@ app.use("/uploads", express.static("uploads"));
 // 🔴 SOCKET.IO REAL-TIME TRACKING LOGIC
 // ==========================================
 let activeUsers = {};
+const privateChatSocket = require('./socket/privateChatSocket'); // প্রাইভেট চ্যাটের সকেট ইম্পোর্ট
 
 io.on('connection', (socket) => {
   console.log('🟢 New user connected via Socket:', socket.id);
 
+  // প্রাইভেট চ্যাটের ইভেন্টগুলো ইনিশিয়ালাইজ করা হলো
+  privateChatSocket(io, socket); 
+
+  // ইউজার পেজ চেঞ্জ করলে ট্র্যাকিং
   socket.on('page_change', (data) => {
     activeUsers[socket.id] = {
       page: data.page,
@@ -80,6 +85,7 @@ io.on('connection', (socket) => {
     io.emit('active_users_update', Object.keys(activeUsers).length);
   });
 
+  // ইউজার ডিসকানেক্ট হলে
   socket.on('disconnect', () => {
     console.log('🔴 User disconnected:', socket.id);
     delete activeUsers[socket.id];
@@ -117,7 +123,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/blogs", blogRoutes); 
 app.use("/api/config/fees", feeConfigRoutes);
 app.use("/api/config/verification", verificationConfigRoutes);
-
+app.use('/api/private-chat', privateChatRoutes);
 // 🔥 NEW: Payment Method Routes Mount
 app.use("/api/payment-methods", paymentMethodRoutes);
 
