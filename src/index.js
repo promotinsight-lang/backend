@@ -20,7 +20,7 @@ app.set('trust proxy', 1);
 const server = http.createServer(app); 
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5173", 
+    origin: ["http://localhost:5173", "https://promotinsight.com"], 
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true 
   }
@@ -36,8 +36,8 @@ app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
 
 // 2. CORS Setup
 app.use(cors({
-    origin: ['http://localhost:5173', 'https://promotinsight.com', 'https://www.promotinsight.com'], 
-    credentials: true,
+    origin: ["http://localhost:5173", "https://promotinsight.com"],
+    credentials: true
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
