@@ -37,7 +37,7 @@ app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
 // 2. CORS Setup
 app.use(cors({
     origin: ["http://localhost:5173", "https://promotinsight.com"],
-    credentials: true
+    credentials: true,  // <--- এখানে একটি কমা (,) যুক্ত করা হয়েছে
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
