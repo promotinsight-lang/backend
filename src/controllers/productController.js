@@ -86,7 +86,8 @@ const createProduct = async (req, res) => {
   const client = await pool.connect();
   try {
     const sellerId = req.user.id;
-    const { product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, platform, category } = req.body;
+    // 🔥 FIX: Added total_deposit here to receive it from frontend
+    const { product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, platform, category, total_deposit } = req.body;
     const safeCountry = country ? country.trim() : '';
     const safePlatform = platform ? platform.trim() : '';
 
@@ -147,22 +148,30 @@ const createProduct = async (req, res) => {
 
     const currentBalance = parseFloat(userResult.rows[0].wallet_balance) || 0;
 
+    // 🔥 FIX: Use frontend provided total_deposit (USD) directly
+    const frontendTotalDepositUSD = parseAmount(total_deposit);
+
+    if (Number.isNaN(frontendTotalDepositUSD) || frontendTotalDepositUSD <= 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: "Invalid deposit amount received." });
+    }
+
     // 🔥 CHECK BALANCE IN USD
-    if (currentBalance < totalRequiredDepositUSD) {
+    if (currentBalance < frontendTotalDepositUSD) {
       await client.query('ROLLBACK');
       return res.status(400).json({ 
         success: false,
-        message: `Insufficient USD balance. You need $${totalRequiredDepositUSD.toFixed(2)} USD (Equivalent to ${totalRequiredDepositLocal.toFixed(2)} local currency) to list this product.` 
+        message: `Insufficient USD balance. You need $${frontendTotalDepositUSD.toFixed(2)} USD to list this product.` 
       });
     }
 
     // 🔥 DEDUCT BALANCE IN USD
     await client.query(
       "UPDATE users SET wallet_balance = wallet_balance - $1 WHERE id = $2",
-      [totalRequiredDepositUSD, sellerId]
+      [frontendTotalDepositUSD, sellerId]
     );
 
-    // Insert Product with total_deposit AND platform_fee_charged
+    // Insert Product with total_deposit (Saving USD value instead of Local) AND platform_fee_charged
     const result = await client.query(
       `INSERT INTO products 
       (image_url, product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, seller_id, platform, category, status, total_deposit, platform_fee_charged)
@@ -172,14 +181,14 @@ const createProduct = async (req, res) => {
         image_url, product_name.trim(), priceVal, store_name.trim(), search_keyword.trim(), 
         resolvedReward, product_link.trim(), safeCountry, qtyVal, 
         instructions ? instructions.trim() : '', sellerId, safePlatform, 
-        category ? category.trim() : 'General', totalRequiredDepositLocal, commissionPerOrderLocal
+        category ? category.trim() : 'General', frontendTotalDepositUSD, commissionPerOrderLocal
       ]
     );
 
     // 🔥 LOG TRANSACTION IN USD
     await client.query(
       "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'product_deposit', $3, 'completed')",
-      [sellerId, totalRequiredDepositUSD, `Deposit held for campaign: ${product_name} (Ex. Rate: ${exchangeRate})`]
+      [sellerId, frontendTotalDepositUSD, `Deposit held for campaign: ${product_name} (Ex. Rate: ${exchangeRate})`]
     );
 
     await client.query('COMMIT');
