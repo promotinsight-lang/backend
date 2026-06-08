@@ -68,50 +68,44 @@ app.use("/uploads", express.static("uploads"));
 // 🔴 SOCKET.IO REAL-TIME TRACKING LOGIC
 // ==========================================
 let activeUsers = {};
-const onlineUsers = new Set(); // 🟢 নতুন: অনলাইন ইউজারদের ট্র্যাক করার জন্য
-const privateChatSocket = require('./socket/privateChatSocket'); // প্রাইভেট চ্যাটের সকেট ইম্পোর্ট
+const onlineUsersMap = new Map(); // 🟢 মাল্টিপল ট্যাবের জন্য Map ব্যবহার করা হলো
+const privateChatSocket = require('./socket/privateChatSocket'); 
 
 io.on('connection', (socket) => {
   console.log('🟢 New user connected via Socket:', socket.id);
 
-  // প্রাইভেট চ্যাটের ইভেন্টগুলো ইনিশিয়ালাইজ করা হলো
   privateChatSocket(io, socket); 
 
-  // 🟢 User Online Tracking
+  // 🟢 User Online Tracking (Multiple Tab Fix)
   socket.on('user_online', (userId) => {
-    socket.userId = String(userId);
-    onlineUsers.add(String(userId));
-    io.emit('online_users_update', Array.from(onlineUsers)); // সবাইকে আপডেট পাঠানো
+    onlineUsersMap.set(socket.id, String(userId));
+    const uniqueOnlineUsers = Array.from(new Set(onlineUsersMap.values()));
+    io.emit('online_users_update', uniqueOnlineUsers); 
   });
 
-  // 🟢 এডমিন রিকোয়েস্ট করলে সাথে সাথে অনলাইন লিস্ট পাঠানো
   socket.on('request_online_users', () => {
-    socket.emit('online_users_update', Array.from(onlineUsers));
+    const uniqueOnlineUsers = Array.from(new Set(onlineUsersMap.values()));
+    socket.emit('online_users_update', uniqueOnlineUsers);
   });
 
-  // ইউজার পেজ চেঞ্জ করলে ট্র্যাকিং
   socket.on('page_change', (data) => {
-    activeUsers[socket.id] = {
-      page: data.page,
-      timestamp: new Date()
-    };
+    activeUsers[socket.id] = { page: data.page, timestamp: new Date() };
     io.emit('active_users_update', Object.keys(activeUsers).length);
   });
 
-  // ইউজার ডিসকানেক্ট হলে
   socket.on('disconnect', () => {
     console.log('🔴 User disconnected:', socket.id);
     delete activeUsers[socket.id];
     io.emit('active_users_update', Object.keys(activeUsers).length);
 
-    // 🔴 User Disconnect Tracking 
-    if (socket.userId) {
-      onlineUsers.delete(socket.userId);
-      io.emit('online_users_update', Array.from(onlineUsers)); // লিস্ট আপডেট করা
+    // 🔴 User Disconnect Tracking (স্মার্ট রিমুভ)
+    if (onlineUsersMap.has(socket.id)) {
+      onlineUsersMap.delete(socket.id);
+      const uniqueOnlineUsers = Array.from(new Set(onlineUsersMap.values()));
+      io.emit('online_users_update', uniqueOnlineUsers); 
     }
   });
 });
-
 // ==========================================
 // 🔗 ROUTES IMPORT & MOUNT
 // ==========================================
