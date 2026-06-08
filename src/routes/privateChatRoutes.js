@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 
+// 🟢 ডাটাবেস কানেকশন ইম্পোর্ট করা হলো (সরাসরি কোয়েরি চালানোর জন্য)
+const pool = require('../config/db'); 
+
 // কন্ট্রোলার ইম্পোর্ট
 const {
   requestChat,
@@ -34,6 +37,23 @@ router.get('/sessions/:sessionId/messages', protect, getSessionMessages);
 // ==========================================
 // পেন্ডিং রিকোয়েস্টের লিস্ট দেখা
 router.get('/admin/requests', protect, isAdmin, getPendingChatRequests);
+
+// 🟢 নতুন যুক্ত করা হলো: Active Sessions Fetch API (For Admin Sidebar)
+router.get('/admin/sessions', protect, isAdmin, async (req, res) => {
+    try {
+        const query = `
+            SELECT s.*, u.name, u.email 
+            FROM private_chat_sessions s
+            LEFT JOIN users u ON s.user_id = u.id
+            WHERE s.status = 'active'
+        `;
+        const result = await pool.query(query);
+        res.json({ success: true, data: result.rows });
+    } catch (error) {
+        console.error("Error fetching active sessions:", error);
+        res.status(500).json({ success: false, message: "Server error fetching sessions" });
+    }
+});
 
 // কোনো রিকোয়েস্ট একসেপ্ট বা রিজেক্ট করা
 router.post('/admin/requests/:id/approve', protect, isAdmin, approveChatRequest);
