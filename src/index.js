@@ -68,6 +68,7 @@ app.use("/uploads", express.static("uploads"));
 // 🔴 SOCKET.IO REAL-TIME TRACKING LOGIC
 // ==========================================
 let activeUsers = {};
+const onlineUsers = new Set(); // 🟢 নতুন: অনলাইন ইউজারদের ট্র্যাক করার জন্য
 const privateChatSocket = require('./socket/privateChatSocket'); // প্রাইভেট চ্যাটের সকেট ইম্পোর্ট
 
 io.on('connection', (socket) => {
@@ -75,6 +76,18 @@ io.on('connection', (socket) => {
 
   // প্রাইভেট চ্যাটের ইভেন্টগুলো ইনিশিয়ালাইজ করা হলো
   privateChatSocket(io, socket); 
+
+  // 🟢 User Online Tracking
+  socket.on('user_online', (userId) => {
+    socket.userId = String(userId);
+    onlineUsers.add(String(userId));
+    io.emit('online_users_update', Array.from(onlineUsers)); // সবাইকে আপডেট পাঠানো
+  });
+
+  // 🟢 এডমিন রিকোয়েস্ট করলে সাথে সাথে অনলাইন লিস্ট পাঠানো
+  socket.on('request_online_users', () => {
+    socket.emit('online_users_update', Array.from(onlineUsers));
+  });
 
   // ইউজার পেজ চেঞ্জ করলে ট্র্যাকিং
   socket.on('page_change', (data) => {
@@ -90,6 +103,12 @@ io.on('connection', (socket) => {
     console.log('🔴 User disconnected:', socket.id);
     delete activeUsers[socket.id];
     io.emit('active_users_update', Object.keys(activeUsers).length);
+
+    // 🔴 User Disconnect Tracking 
+    if (socket.userId) {
+      onlineUsers.delete(socket.userId);
+      io.emit('online_users_update', Array.from(onlineUsers)); // লিস্ট আপডেট করা
+    }
   });
 });
 
