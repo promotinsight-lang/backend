@@ -447,7 +447,24 @@ const socialLogin = async (req, res) => {
       return res.status(400).json({ success: false, message: "Firebase idToken is required for social login" });
     }
 
-    const decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
+    let decodedToken;
+    try {
+      decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
+    } catch (verifyError) {
+      console.error("FIREBASE TOKEN VERIFY ERROR:", verifyError.code || verifyError.message);
+
+      if (verifyError.code && String(verifyError.code).startsWith("auth/")) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid or expired Firebase login token"
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message: "Social login is not configured correctly on the server"
+      });
+    }
     const verifiedEmail = decodedToken.email;
     const provider = decodedToken.firebase?.sign_in_provider || "firebase";
     const allowedSocialProviders = new Set(["google.com", "yahoo.com"]);
