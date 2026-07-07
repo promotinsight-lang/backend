@@ -1,4 +1,5 @@
 const admin = require("firebase-admin");
+const { getAuth } = require("firebase-admin/auth");
 
 const parseServiceAccount = () => {
   if (!process.env.FIREBASE_SERVICE_ACCOUNT_JSON) return null;
@@ -11,20 +12,18 @@ const parseServiceAccount = () => {
 };
 
 const getFirebaseAdmin = () => {
-  if (admin.apps.length > 0) return admin;
-
-  const serviceAccount = parseServiceAccount();
-  if (serviceAccount) {
+  if (admin.getApps().length === 0) {
+    const serviceAccount = parseServiceAccount();
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+      credential: serviceAccount
+        ? admin.cert(serviceAccount)
+        : admin.applicationDefault(),
     });
-    return admin;
   }
 
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault(),
-  });
-  return admin;
+  return {
+    auth: () => getAuth(),
+  };
 };
 
 module.exports = getFirebaseAdmin();
