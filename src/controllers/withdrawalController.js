@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const crypto = require("crypto");
 
 // ==========================================
 // 💸 Request Withdrawal (Buyer/Seller) - 🔥 FIXED SQL ID ERROR & ADDED QR SUPPORT
@@ -143,10 +144,18 @@ const requestWithdrawal = async (req, res) => {
       ]
     );
 
+    const withdrawal = withdrawalResult.rows[0];
+    const transactionReference = `withdrawal:${withdrawal.id}:${crypto.randomUUID()}`;
+
+    await client.query(
+      "UPDATE withdrawals SET transaction_reference = $1 WHERE id = $2",
+      [transactionReference, withdrawal.id]
+    );
+
     // 6. Log transaction
     await client.query(
-        "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'withdrawal', $3, 'pending')",
-        [userId, amountValue, `Withdrawal requested. Fee: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)} USD`]
+        "INSERT INTO transactions (user_id, amount, type, description, status, reference_id) VALUES ($1, $2, 'withdrawal', $3, 'pending', $4)",
+        [userId, amountValue, `Withdrawal requested. Fee: $${feeAmount.toFixed(2)}. Net to receive: $${netPayable.toFixed(2)} USD`, transactionReference]
     );
 
     await client.query('COMMIT');
@@ -154,7 +163,7 @@ const requestWithdrawal = async (req, res) => {
     res.status(201).json({
       success: true,
       message: `Withdrawal request submitted successfully. Net to receive: $${netPayable.toFixed(2)} USD`,
-      data: withdrawalResult.rows[0]
+      data: { ...withdrawal, transaction_reference: transactionReference }
     });
 
   } catch (error) {
@@ -221,17 +230,33 @@ const approveWithdrawal = async (req, res) => {
       return res.status(400).json({ success: false, message: "Only pending requests can be approved" });
     }
 
+    if (!withdrawal.transaction_reference) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        message: "Withdrawal transaction reference is missing. Manual review is required."
+      });
+    }
+
     const safeTxId = transaction_id ? transaction_id.trim() : null;
     const safeUrl = screenshot_url ? screenshot_url.trim() : null;
+
+    const transactionUpdateResult = await client.query(
+        "UPDATE transactions SET status = 'completed' WHERE reference_id = $1 AND type = 'withdrawal' AND status = 'pending'",
+        [withdrawal.transaction_reference]
+    );
+
+    if (transactionUpdateResult.rowCount !== 1) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        message: "Exact withdrawal transaction could not be updated. Manual review is required."
+      });
+    }
 
     const updateResult = await client.query(
       "UPDATE withdrawals SET status = 'approved', transaction_id = $2, screenshot_url = $3 WHERE id = $1 RETURNING *",
       [withdrawalId, safeTxId, safeUrl]
-    );
-
-    await client.query(
-        "UPDATE transactions SET status = 'completed' WHERE user_id = $1 AND amount = $2 AND type = 'withdrawal' AND status = 'pending'",
-        [withdrawal.user_id, withdrawal.amount]
     );
 
     await client.query('COMMIT');
@@ -268,6 +293,27 @@ const rejectWithdrawal = async (req, res) => {
       return res.status(400).json({ success: false, message: "Only pending requests can be rejected" });
     }
 
+    if (!withdrawal.transaction_reference) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        message: "Withdrawal transaction reference is missing. Manual review is required."
+      });
+    }
+
+    const transactionUpdateResult = await client.query(
+        "UPDATE transactions SET status = 'rejected' WHERE reference_id = $1 AND type = 'withdrawal' AND status = 'pending'",
+        [withdrawal.transaction_reference]
+    );
+
+    if (transactionUpdateResult.rowCount !== 1) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        message: "Exact withdrawal transaction could not be updated. Manual review is required."
+      });
+    }
+
     const updateResult = await client.query("UPDATE withdrawals SET status = 'rejected' WHERE id = $1 RETURNING *", [withdrawalId]);
 
     await client.query(
@@ -276,8 +322,8 @@ const rejectWithdrawal = async (req, res) => {
     );
 
     await client.query(
-        "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
-        [withdrawal.user_id, withdrawal.amount, `Refund for rejected withdrawal request ID: ${withdrawalId}`]
+        "INSERT INTO transactions (user_id, amount, type, description, status, reference_id) VALUES ($1, $2, 'refund', $3, 'completed', $4)",
+        [withdrawal.user_id, withdrawal.amount, `Refund for rejected withdrawal request ID: ${withdrawalId}`, `refund:${withdrawal.transaction_reference}`]
     );
 
     await client.query('COMMIT');

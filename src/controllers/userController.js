@@ -6,6 +6,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const crypto = require("crypto");
 const svgCaptcha = require("svg-captcha"); 
 const axios = require("axios"); // 🔥 NEW: Axios for API calls
+const firebaseAdmin = require("../config/firebaseAdmin");
 
 // ==========================================
 // 🛡️ Security Helpers & In-Memory Cache
@@ -84,6 +85,31 @@ const maskEmail = (email) => {
   const [name, domain] = email.split('@');
   if (name.length <= 2) return `${name[0]}***@${domain}`;
   return `${name.substring(0, 2)}***${name[name.length - 1]}@${domain}`;
+};
+
+const getPasswordResetSecret = () => {
+  const resetSecret = process.env.JWT_RESET_SECRET || process.env.PASSWORD_RESET_SECRET;
+  if (resetSecret) return resetSecret;
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("JWT_RESET_SECRET or PASSWORD_RESET_SECRET is required in production");
+  }
+
+  console.warn("JWT_RESET_SECRET/PASSWORD_RESET_SECRET is not set; falling back to JWT_SECRET for development only.");
+  return process.env.JWT_SECRET;
+};
+
+const updateSocialProviderMetadata = async (userId, provider, firebaseUid) => {
+  try {
+    await pool.query(
+      "UPDATE users SET auth_provider = $1, firebase_uid = $2 WHERE id = $3",
+      [provider, firebaseUid, userId]
+    );
+  } catch (error) {
+    if (error.code !== "42703") {
+      throw error;
+    }
+  }
 };
 
 // 🔥 NEW: Referral Code Generator Helper
@@ -411,17 +437,35 @@ const loginUser = async (req, res) => {
 // =======================
 const socialLogin = async (req, res) => {
   try {
-    const { email, name, auth_provider, referred_by_code, role } = req.body;
+    const { idToken, referred_by_code, role } = req.body;
     
     // 🔥 Track IP and Location on Social Login
     const ipAddress = getClientIp(req); 
     const ipLocation = await getIpLocation(ipAddress);
 
-    if (!email) {
-      return res.status(400).json({ success: false, message: "Email is required for social login" });
+    if (!idToken) {
+      return res.status(400).json({ success: false, message: "Firebase idToken is required for social login" });
     }
 
-    const emailTrimmed = email.trim().toLowerCase();
+    const decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
+    const verifiedEmail = decodedToken.email;
+    const provider = decodedToken.firebase?.sign_in_provider || "firebase";
+    const allowedSocialProviders = new Set(["google.com", "yahoo.com"]);
+
+    if (decodedToken.email_verified !== true || !allowedSocialProviders.has(provider)) {
+      return res.status(401).json({
+        success: false,
+        message: "Unsupported or unverified social provider"
+      });
+    }
+
+    if (!verifiedEmail) {
+      return res.status(400).json({ success: false, message: "Verified email is required for social login" });
+    }
+
+    const emailTrimmed = verifiedEmail.trim().toLowerCase();
+    const providerUid = decodedToken.uid;
+    const verifiedName = decodedToken.name || decodedToken.email?.split("@")[0] || "User";
     
     const existingUser = await pool.query(
       "SELECT id, name, email, password_hash, role, verification_status FROM users WHERE email = $1",
@@ -440,10 +484,11 @@ if (existingUser.rows.length > 0) {
     "UPDATE users SET last_ip = $1, ip_location = $2 WHERE id = $3",
     [ipAddress, ipLocation, user.id]
   );
+  await updateSocialProviderMetadata(user.id, provider, providerUid);
 } else {
       const randomPassword = crypto.randomBytes(16).toString('hex');
       const hashedPassword = await bcrypt.hash(randomPassword, 12);
-      const finalName = name ? name.trim() : 'User';
+      const finalName = verifiedName.trim();
 
       // 🔥 Referral Logic for Social Login
       let referredById = null;
@@ -467,6 +512,7 @@ if (existingUser.rows.length > 0) {
       );
       
       user = newUser.rows[0];
+      await updateSocialProviderMetadata(user.id, provider, providerUid);
 
       // 🔥 Insert into referrals table if user was referred
       if (referredById) {
@@ -486,7 +532,7 @@ if (existingUser.rows.length > 0) {
 
     res.status(200).json({
       success: true,
-      message: `${auth_provider ? auth_provider.toUpperCase() : 'Social'} login successful`,
+      message: `${provider.toUpperCase()} login successful`,
       token, 
       user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status },
     });
@@ -1044,7 +1090,11 @@ const forgotPassword = async (req, res) => {
     }
 
     const user = userResult.rows[0];
-    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+    const token = jwt.sign(
+      { id: String(user.id), purpose: "password_reset" },
+      getPasswordResetSecret(),
+      { expiresIn: '15m' }
+    );
 
     const resetLink = `https://promotinsight.com/reset-password/${user.id}/${token}`;
 
@@ -1085,9 +1135,13 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ success: false, message: "New password must be at least 8 characters long." });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, async (err, decoded) => {
+    jwt.verify(token, getPasswordResetSecret(), async (err, decoded) => {
       if (err) {
         return res.status(400).json({ success: false, message: "Invalid or expired token." });
+      }
+
+      if (!decoded || decoded.purpose !== "password_reset" || String(decoded.id) !== String(id)) {
+        return res.status(400).json({ success: false, message: "Invalid password reset token." });
       }
 
       const salt = await bcrypt.genSalt(12);

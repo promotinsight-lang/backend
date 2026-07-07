@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { getAuthorizedChatSession } = require('../utils/chatAuthorization');
 
 // ==========================================
 // 1. Request Private Chat (Verified User)
@@ -150,12 +151,24 @@ const adminStartChatWithUser = async (req, res) => {
 
     // চেক করা হচ্ছে আগে থেকেই কোনো অ্যাক্টিভ সেশন আছে কি না
     const existingSession = await pool.query(
-      `SELECT * FROM private_chat_sessions WHERE user_id = $1 AND status = 'active'`,
-      [userId]
+      `SELECT * FROM private_chat_sessions WHERE user_id = $1 AND admin_user_id = $2 AND status = 'active'`,
+      [userId, adminId]
     );
 
     if (existingSession.rows.length > 0) {
       return res.status(200).json({ success: true, message: 'Session already active', session: existingSession.rows[0] });
+    }
+
+    const otherAdminSession = await pool.query(
+      `SELECT id FROM private_chat_sessions WHERE user_id = $1 AND status = 'active' LIMIT 1`,
+      [userId]
+    );
+
+    if (otherAdminSession.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'This user already has an active chat session assigned to another admin.'
+      });
     }
 
     const sessionResult = await pool.query(
@@ -176,14 +189,19 @@ const adminStartChatWithUser = async (req, res) => {
 const adminEndChat = async (req, res) => {
   try {
     const { sessionId } = req.params;
-    
-    const sessionCheck = await pool.query(`SELECT status FROM private_chat_sessions WHERE id = $1`, [sessionId]);
-    if (sessionCheck.rows.length === 0) return res.status(404).json({ success: false, message: 'Session not found' });
-    if (sessionCheck.rows[0].status === 'ended') return res.status(400).json({ success: false, message: 'Session already ended' });
+    const session = await getAuthorizedChatSession(sessionId, req.user, {
+      requireAssignedAdmin: true,
+    });
+
+    if (!session) {
+      return res.status(403).json({ success: false, message: 'Not authorized to end this chat session.' });
+    }
+
+    if (session.status === 'ended') return res.status(400).json({ success: false, message: 'Session already ended' });
 
     await pool.query(
       `UPDATE private_chat_sessions SET status = 'ended', ended_at = CURRENT_TIMESTAMP WHERE id = $1`,
-      [sessionId]
+      [session.id]
     );
 
     res.status(200).json({ success: true, message: 'Chat session ended successfully' });
@@ -199,6 +217,11 @@ const adminEndChat = async (req, res) => {
 const getSessionMessages = async (req, res) => {
   try {
     const { sessionId } = req.params;
+    const session = await getAuthorizedChatSession(sessionId, req.user);
+
+    if (!session) {
+      return res.status(403).json({ success: false, message: 'Not authorized to view this chat session.' });
+    }
     
     const messages = await pool.query(
       `SELECT m.*, u.name as sender_name, u.role as sender_role 

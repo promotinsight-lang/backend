@@ -1,5 +1,25 @@
 const pool = require("../config/db");
 const cloudinary = require("cloudinary").v2;
+const sanitizeHtml = require("sanitize-html");
+
+const sanitizeBlogContent = (content) => sanitizeHtml(content, {
+  allowedTags: [
+    'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'blockquote',
+    'ul', 'ol', 'li', 'a', 'h2', 'h3', 'h4', 'pre', 'code',
+    'span', 'img'
+  ],
+  allowedAttributes: {
+    a: ['href', 'name', 'target', 'rel'],
+    img: ['src', 'alt', 'title', 'width', 'height'],
+    span: ['class'],
+    code: ['class'],
+    pre: ['class'],
+  },
+  allowedSchemes: ['http', 'https', 'mailto'],
+  transformTags: {
+    a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }),
+  },
+});
 
 // 🔥 এই কনফিগারেশন ব্লকটি যোগ করুন
 cloudinary.config({
@@ -57,10 +77,12 @@ const createBlog = async (req, res) => {
     }
 
     // ডেটাবেজে সেভ করা (URL সহ)
+    const sanitizedContent = sanitizeBlogContent(content.trim());
+
     const result = await pool.query(
       `INSERT INTO blogs (title, slug, content, image_url, author_name, is_published) 
        VALUES ($1, $2, $3, $4, $5, COALESCE($6, true)) RETURNING *`,
-      [title.trim(), slug, content.trim(), image_url, author_name || 'Admin', is_published]
+      [title.trim(), slug, sanitizedContent, image_url, author_name || 'Admin', is_published]
     );
 
     res.status(201).json({ success: true, message: "Blog published successfully!", data: result.rows[0] });
@@ -110,7 +132,13 @@ const getBlogBySlug = async (req, res) => {
       return res.status(404).json({ success: false, message: "Blog not found." });
     }
 
-    res.status(200).json({ success: true, data: result.rows[0] });
+    res.status(200).json({
+      success: true,
+      data: {
+        ...result.rows[0],
+        content: sanitizeBlogContent(result.rows[0].content || ''),
+      },
+    });
   } catch (error) {
     console.error("GET BLOG BY SLUG ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });

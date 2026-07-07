@@ -8,6 +8,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
+const jwt = require("jsonwebtoken");
 const pool = require("./config/db");
 require("dotenv").config();
 const privateChatRoutes = require('./routes/privateChatRoutes');
@@ -77,8 +78,8 @@ io.on('connection', (socket) => {
   privateChatSocket(io, socket); 
 
   // 🟢 User Online Tracking (Multiple Tab Fix)
-  socket.on('user_online', (userId) => {
-    onlineUsersMap.set(socket.id, String(userId));
+  socket.on('user_online', () => {
+    onlineUsersMap.set(socket.id, String(socket.user.id));
     const uniqueOnlineUsers = Array.from(new Set(onlineUsersMap.values()));
     io.emit('online_users_update', uniqueOnlineUsers); 
   });
@@ -181,4 +182,60 @@ const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Secure Enterprise Server running on port ${PORT}`);
   console.log(`📡 Socket.io is ready for real-time tracking!`);
+});
+
+const parseCookieHeader = (cookieHeader = "") => (
+  cookieHeader.split(";").reduce((cookies, pair) => {
+    const separatorIndex = pair.indexOf("=");
+    if (separatorIndex === -1) return cookies;
+    const key = pair.slice(0, separatorIndex).trim();
+    const value = pair.slice(separatorIndex + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(value);
+    return cookies;
+  }, {})
+);
+
+const getSocketToken = (socket) => {
+  if (socket.handshake.auth?.token) {
+    return socket.handshake.auth.token;
+  }
+
+  const authHeader = socket.handshake.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
+  }
+
+  const cookies = parseCookieHeader(socket.handshake.headers.cookie);
+  return cookies.token;
+};
+
+io.use(async (socket, next) => {
+  try {
+    const token = getSocketToken(socket);
+    if (!token) {
+      return next(new Error("Authentication required"));
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const userResult = await pool.query(
+      "SELECT id, role, is_active, is_frozen FROM users WHERE id = $1",
+      [decoded.id]
+    );
+
+    if (userResult.rows.length === 0 || userResult.rows[0].is_active === false) {
+      return next(new Error("Invalid socket user"));
+    }
+
+    const user = userResult.rows[0];
+    socket.user = {
+      id: user.id,
+      role: String(user.role).trim().toLowerCase(),
+      is_active: user.is_active,
+      is_frozen: user.is_frozen,
+    };
+
+    next();
+  } catch (error) {
+    next(new Error("Invalid socket token"));
+  }
 });
