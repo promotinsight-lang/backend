@@ -53,24 +53,21 @@ const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, useConfi
       commissionPerOrderLocal = price * (Number.isNaN(platformChargePercent) ? 0.10 : platformChargePercent);
   }
 
-  const refundFeePercent = parseAmount(feeConfig.buyer_refund_fee || 0) / 100;
-  const costPerOrderLocal = price + resolvedReward;
-  const refundFeePerOrderLocal = costPerOrderLocal * refundFeePercent;
+  const rewardDepositPerOrderLocal = resolvedReward;
 
   // 🔥 LOCAL CURRENCY DEPOSIT
-  const requiredDepositPerOrderLocal = costPerOrderLocal + commissionPerOrderLocal + refundFeePerOrderLocal;
+  const requiredDepositPerOrderLocal = rewardDepositPerOrderLocal + commissionPerOrderLocal;
   const totalRequiredDepositLocal = requiredDepositPerOrderLocal * quantity;
 
   // 🔥 USD CONVERSION (For Wallet Deduction)
+  // Frontend submits price/reward in USD; exchangeRate is kept for display/audit context.
   const exchangeRate = parseFloat(feeConfig.exchange_rate) || 1.0;
-  const totalRequiredDepositUSD = totalRequiredDepositLocal / exchangeRate;
+  const totalRequiredDepositUSD = totalRequiredDepositLocal;
 
   return {
     resolvedReward,
     commissionPerOrderLocal,
-    refundFeePercent,
-    costPerOrderLocal,
-    refundFeePerOrderLocal,
+    rewardDepositPerOrderLocal,
     totalRequiredDepositLocal,
     totalRequiredDepositUSD,
     exchangeRate,
@@ -120,7 +117,6 @@ const createProduct = async (req, res) => {
 
     const { 
         resolvedReward, 
-        totalRequiredDepositLocal, 
         totalRequiredDepositUSD, 
         exchangeRate, 
         hasFeeError, 
@@ -236,16 +232,23 @@ const cancelProduct = async (req, res) => {
       });
     }
 
-    const { totalRequiredDepositUSD: refundAmountUSD, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
-      price: priceVal,
-      reward: rewardVal,
-      quantity: qtyVal,
-      feeConfig,
-    });
+    const savedDepositUSD = parseAmount(product.total_deposit);
+    let refundAmountUSD = Number.isFinite(savedDepositUSD) ? savedDepositUSD : 0;
 
-    if (hasFeeError) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ success: false, message: feeErrorMessage });
+    if (!Number.isFinite(savedDepositUSD)) {
+      const { totalRequiredDepositUSD, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
+        price: priceVal,
+        reward: rewardVal,
+        quantity: qtyVal,
+        feeConfig,
+      });
+
+      if (hasFeeError) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, message: feeErrorMessage });
+      }
+
+      refundAmountUSD = totalRequiredDepositUSD;
     }
 
     // Refund wallet in USD
@@ -453,16 +456,25 @@ const rejectProductAdmin = async (req, res) => {
         remainingQty = Math.max(0, qtyVal - usedQty);
     }
     
-    const { totalRequiredDepositUSD: refundAmountUSD, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
+    const savedDepositUSD = parseAmount(product.total_deposit);
+    let refundAmountUSD = Number.isFinite(savedDepositUSD)
+        ? (savedDepositUSD / Math.max(qtyVal, 1)) * remainingQty
+        : 0;
+
+    if (!Number.isFinite(savedDepositUSD)) {
+      const { totalRequiredDepositUSD, hasFeeError, feeErrorMessage } = calculateCampaignDeposit({
         price: priceVal,
         reward: rewardVal,
         quantity: remainingQty,
         feeConfig,
-    });
+      });
 
-    if (hasFeeError) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ success: false, message: feeErrorMessage });
+      if (hasFeeError) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ success: false, message: feeErrorMessage });
+      }
+
+      refundAmountUSD = totalRequiredDepositUSD;
     }
 
     // Refund the wallet ONLY if there is remaining money (Refund in USD)

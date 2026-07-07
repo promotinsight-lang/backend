@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const crypto = require("crypto");
+const { getBuyerWalletBreakdown } = require("../utils/buyerWalletBreakdown");
 
 // ==========================================
 // 💸 Request Withdrawal (Buyer/Seller) - 🔥 FIXED SQL ID ERROR & ADDED QR SUPPORT
@@ -93,10 +94,25 @@ const requestWithdrawal = async (req, res) => {
     }
 
     const currentBalance = parseFloat(userResult.rows[0].wallet_balance || 0);
+    const userRole = userResult.rows[0].role;
 
     if (currentBalance < amountValue) {
       await client.query('ROLLBACK');
       return res.status(400).json({ success: false, message: "Insufficient wallet balance." });
+    }
+
+    if (userRole === 'buyer') {
+      const breakdown = await getBuyerWalletBreakdown(client, userId);
+      if (amountValue > breakdown.withdrawable_balance) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          message:
+            `Withdrawable balance is $${breakdown.withdrawable_balance.toFixed(2)} USD. ` +
+            `Reward balance must be at least $${breakdown.reward_min_withdrawal.toFixed(2)} USD, ` +
+            `and signup bonus unlocks after ${breakdown.signup_bonus_min_completed_orders} completed orders.`
+        });
+      }
     }
 
     const userCountry = userResult.rows[0].amazon_location || userResult.rows[0].ip_location || 'Local';

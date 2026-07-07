@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const svgCaptcha = require("svg-captcha"); 
 const axios = require("axios"); // 🔥 NEW: Axios for API calls
 const firebaseAdmin = require("../config/firebaseAdmin");
+const { getBuyerWalletBreakdown } = require("../utils/buyerWalletBreakdown");
 
 // ==========================================
 // 🛡️ Security Helpers & In-Memory Cache
@@ -113,6 +114,8 @@ const updateSocialProviderMetadata = async (userId, provider, firebaseUid) => {
 };
 
 // 🔥 NEW: Referral Code Generator Helper
+const BUYER_REGISTRATION_BONUS_USD = 10;
+
 const generateReferralCode = (name) => {
   const prefix = name ? name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X') : 'USR';
   const randomString = crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -317,17 +320,25 @@ const registerUser = async (req, res) => {
 
     // 🔥 Generate Referral Code for the new user
     const newReferralCode = generateReferralCode(finalName);
+    const registrationBonus = userRole === 'buyer' ? BUYER_REGISTRATION_BONUS_USD : 0;
 
     // 🔥 Add IP, Location, Referral Code, and Referrer ID to insertion
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, name, email, role, verification_status`,
-      [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById]
+      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, name, email, role, verification_status, wallet_balance`,
+      [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById, registrationBonus]
     );
 
     const user = result.rows[0];
     otpCache.delete(emailTrimmed);
+
+    if (registrationBonus > 0) {
+      await pool.query(
+        "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'registration_bonus', $3, 'completed')",
+        [user.id, registrationBonus, 'New buyer registration bonus']
+      );
+    }
 
     // 🔥 Insert into referrals table if user was referred
     if (referredById) {
@@ -348,7 +359,7 @@ const registerUser = async (req, res) => {
       success: true,
       message: "User registered successfully", 
       token, 
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status } 
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance } 
     });
 
   } catch (error) {
@@ -391,7 +402,7 @@ const loginUser = async (req, res) => {
     }
 
     const result = await pool.query(
-      "SELECT id, name, email, password_hash, role, verification_status FROM users WHERE email = $1",
+      "SELECT id, name, email, password_hash, role, verification_status, wallet_balance FROM users WHERE email = $1",
       [email.trim().toLowerCase()]
     );
 
@@ -423,7 +434,7 @@ const loginUser = async (req, res) => {
       success: true,
       message: "Login successful",
       token, 
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance },
     });
 
   } catch (error) {
@@ -485,7 +496,7 @@ const socialLogin = async (req, res) => {
     const verifiedName = decodedToken.name || decodedToken.email?.split("@")[0] || "User";
     
     const existingUser = await pool.query(
-      "SELECT id, name, email, password_hash, role, verification_status FROM users WHERE email = $1",
+      "SELECT id, name, email, password_hash, role, verification_status, wallet_balance FROM users WHERE email = $1",
       [emailTrimmed]
     );
 
@@ -519,17 +530,25 @@ if (existingUser.rows.length > 0) {
       const newReferralCode = generateReferralCode(finalName);
       const normalizedRole = role ? role.trim().toLowerCase() : 'buyer';
       const userRole = normalizedRole === 'seller' ? 'seller' : 'buyer';
+      const registrationBonus = userRole === 'buyer' ? BUYER_REGISTRATION_BONUS_USD : 0;
 
       // 🔥 Insert IP, Location, and Referral Data for new social login user
       const newUser = await pool.query(
-        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, name, email, role, verification_status`,
-        [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById]
+        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id, name, email, role, verification_status, wallet_balance`,
+        [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById, registrationBonus]
       );
       
       user = newUser.rows[0];
       await updateSocialProviderMetadata(user.id, provider, providerUid);
+
+      if (registrationBonus > 0) {
+        await pool.query(
+          "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'registration_bonus', $3, 'completed')",
+          [user.id, registrationBonus, 'New buyer registration bonus']
+        );
+      }
 
       // 🔥 Insert into referrals table if user was referred
       if (referredById) {
@@ -551,7 +570,7 @@ if (existingUser.rows.length > 0) {
       success: true,
       message: `${provider.toUpperCase()} login successful`,
       token, 
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance },
     });
 
   } catch (error) {
@@ -593,7 +612,12 @@ const getUserProfile = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    res.status(200).json({ success: true, user: result.rows[0] });
+    const user = result.rows[0];
+    if (user.role === 'buyer') {
+      user.wallet_breakdown = await getBuyerWalletBreakdown(pool, userId);
+    }
+
+    res.status(200).json({ success: true, user });
 
   } catch (error) {
     console.error("GET PROFILE ERROR:", error);
