@@ -4,6 +4,7 @@ const rateLimit = require("express-rate-limit");
 
 const {
   getPublicLiveFeed,      
+  getPublicUserStats,
   generateCaptcha,        
   sendRegistrationOtp,    
   registerUser,
@@ -73,6 +74,7 @@ const financialLimiter = rateLimit({
 // ==========================
 
 router.get("/live-feed", getPublicLiveFeed);
+router.get("/public-stats", getPublicUserStats);
 router.get("/captcha", generateCaptcha);
 router.post("/send-otp", otpLimiter, sendRegistrationOtp);
 

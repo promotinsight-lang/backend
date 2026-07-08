@@ -330,6 +330,36 @@ const getPublicLiveFeed = async (req, res) => {
   }
 };
 
+const PUBLIC_SELLER_BASE_COUNT = 435;
+const PUBLIC_BUYER_BASE_COUNT = 4560;
+
+const getPublicUserStats = async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT role, COUNT(*)::int AS count
+      FROM users
+      WHERE role IN ('buyer', 'seller')
+      GROUP BY role
+    `);
+
+    const counts = result.rows.reduce(
+      (acc, row) => ({ ...acc, [row.role]: Number(row.count) || 0 }),
+      { buyer: 0, seller: 0 }
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        sellers: PUBLIC_SELLER_BASE_COUNT + counts.seller,
+        buyers: PUBLIC_BUYER_BASE_COUNT + counts.buyer,
+      },
+    });
+  } catch (error) {
+    console.error("PUBLIC USER STATS ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 // ==========================================
 // 🖼️ Generate CAPTCHA
 // ==========================================
@@ -1422,6 +1452,7 @@ const sendContactEmail = async (req, res) => {
 
 module.exports = {
   getPublicLiveFeed,      
+  getPublicUserStats,
   generateCaptcha,        
   sendRegistrationOtp,    
   registerUser,
