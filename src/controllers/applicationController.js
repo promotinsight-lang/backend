@@ -266,6 +266,7 @@ const getMyApplications = async (req, res) => {
       `SELECT 
          a.id AS application_id, a.status AS application_status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment,
          a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at AS applied_on,
+         a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
          p.id AS product_id, p.product_name, p.image_url, p.price, p.reward, p.country, p.platform, p.store_name, p.search_keyword, p.instructions, p.category
        FROM applications a JOIN products p ON a.product_id = p.id
        WHERE a.user_id = $1 ORDER BY a.created_at DESC`,
