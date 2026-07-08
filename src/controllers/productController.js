@@ -338,7 +338,8 @@ const getPublicProducts = async (req, res) => {
       SELECT p.id, p.product_name, p.image_url, p.price, p.reward, p.platform, p.country, p.category, p.status, p.required_orders,
              COALESCE(COUNT(a.id), 0)::int AS application_count
       FROM products p
-      LEFT JOIN applications a ON p.id = a.product_id AND a.status != 'rejected'
+      LEFT JOIN applications a ON p.id = a.product_id
+        AND a.status IN ('order_submitted', 'order_approved', 'review_submitted', 'pending_refund', 'forwarded_to_seller', 'completed', 'disputed')
       WHERE p.status IN ('approved', 'stopped')
       GROUP BY p.id
       ORDER BY p.created_at DESC
@@ -360,7 +361,8 @@ const getProducts = async (req, res) => {
              COALESCE(COUNT(a.id), 0)::int AS application_count
       FROM products p
       LEFT JOIN users u ON p.seller_id = u.id
-      LEFT JOIN applications a ON p.id = a.product_id AND a.status != 'rejected'
+      LEFT JOIN applications a ON p.id = a.product_id
+        AND a.status IN ('order_submitted', 'order_approved', 'review_submitted', 'pending_refund', 'forwarded_to_seller', 'completed', 'disputed')
       GROUP BY p.id, u.name, u.email, u.wallet_balance
       ORDER BY p.created_at DESC
     `);
@@ -448,7 +450,13 @@ const rejectProductAdmin = async (req, res) => {
         });
     }
 
-    const appCheck = await client.query("SELECT COUNT(*) FROM applications WHERE product_id = $1 AND status != 'rejected'", [productId]);
+    const appCheck = await client.query(
+      `SELECT COUNT(*)
+       FROM applications
+       WHERE product_id = $1
+         AND status IN ('order_submitted', 'order_approved', 'review_submitted', 'pending_refund', 'forwarded_to_seller', 'completed', 'disputed')`,
+      [productId]
+    );
     const usedQty = parseInt(appCheck.rows[0].count) || 0;
     
     let remainingQty = qtyVal;
@@ -514,7 +522,8 @@ const getMyProducts = async (req, res) => {
     const result = await pool.query(
       `SELECT p.*, COALESCE(COUNT(a.id), 0)::int AS application_count 
        FROM products p 
-       LEFT JOIN applications a ON p.id = a.product_id AND a.status != 'rejected'
+       LEFT JOIN applications a ON p.id = a.product_id
+         AND a.status IN ('order_submitted', 'order_approved', 'review_submitted', 'pending_refund', 'forwarded_to_seller', 'completed', 'disputed')
        WHERE p.seller_id = $1 
        GROUP BY p.id 
        ORDER BY p.created_at DESC`, 

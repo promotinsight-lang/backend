@@ -139,15 +139,18 @@ const applyToProduct = async (req, res) => {
       return res.status(400).json({ message: "This product is not available for new applications" });
     }
 
-    const applicationCount = await client.query(
-      "SELECT COUNT(*)::int AS count FROM applications WHERE product_id = $1 AND status != 'rejected'",
+    const submittedOrderCount = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM applications
+       WHERE product_id = $1
+         AND status IN ('order_submitted', 'order_approved', 'review_submitted', 'pending_refund', 'forwarded_to_seller', 'completed', 'disputed')`,
       [productId]
     );
 
     const requiredOrders = parseInt(product.required_orders, 10) || 0;
-    const currentApplications = parseInt(applicationCount.rows[0].count, 10) || 0;
+    const currentOrders = parseInt(submittedOrderCount.rows[0].count, 10) || 0;
 
-    if (requiredOrders > 0 && currentApplications >= requiredOrders) {
+    if (requiredOrders > 0 && currentOrders >= requiredOrders) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: "This product is sold out" });
     }
@@ -163,12 +166,12 @@ const applyToProduct = async (req, res) => {
     }
 
     const result = await client.query(
-      `INSERT INTO applications (user_id, product_id, status, ip_address, ip_location) VALUES ($1, $2, 'pending', $3, $4) RETURNING *`,
+      `INSERT INTO applications (user_id, product_id, status, ip_address, ip_location) VALUES ($1, $2, 'approved', $3, $4) RETURNING *`,
       [user_id, productId, ipAddress, ipLocation]
     );
 
     await client.query('COMMIT');
-    res.status(201).json({ message: "Applied successfully", application: result.rows[0] });
+    res.status(201).json({ message: "Order is ready. Please submit your order details.", application: result.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("APPLY ERROR:", error);
@@ -278,6 +281,7 @@ const getMyApplications = async (req, res) => {
 // 🛒 Submit Order Number (Buyer)
 // ==========================================
 const submitOrder = async (req, res) => {
+  const client = await pool.connect();
   try {
     const applicationId = req.params.id;
     const { order_number, screenshot_url, screenshot_url_2, order_comment } = req.body;
@@ -287,14 +291,46 @@ const submitOrder = async (req, res) => {
       return res.status(400).json({ message: "Order number is required" });
     }
 
-    const appCheck = await pool.query("SELECT id, status FROM applications WHERE id = $1 AND user_id = $2", [applicationId, userId]);
-    if (appCheck.rows.length === 0) return res.status(404).json({ message: "Application not found or unauthorized" });
-    if (appCheck.rows[0].status !== 'approved') return res.status(400).json({ message: "You can only submit an order for 'approved' applications" });
+    await client.query('BEGIN');
 
-    const result = await pool.query(
+    const appCheck = await client.query(
+      `SELECT a.id, a.status, a.product_id, p.required_orders
+       FROM applications a
+       JOIN products p ON a.product_id = p.id
+       WHERE a.id = $1 AND a.user_id = $2
+       FOR UPDATE OF a, p`,
+      [applicationId, userId]
+    );
+    if (appCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Application not found or unauthorized" });
+    }
+    if (!['approved', 'pending'].includes(appCheck.rows[0].status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "You can only submit an order for ready applications" });
+    }
+
+    const app = appCheck.rows[0];
+    const requiredOrders = parseInt(app.required_orders, 10) || 0;
+    if (requiredOrders > 0) {
+      const orderCount = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM applications
+         WHERE product_id = $1
+           AND status IN ('order_submitted', 'order_approved', 'review_submitted', 'pending_refund', 'forwarded_to_seller', 'completed', 'disputed')`,
+        [app.product_id]
+      );
+      const usedOrders = parseInt(orderCount.rows[0].count, 10) || 0;
+      if (usedOrders >= requiredOrders) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ message: "This product is sold out" });
+      }
+    }
+
+    const result = await client.query(
       `UPDATE applications 
        SET order_number = $1, screenshot_url = $2, screenshot_url_2 = $3, order_comment = $4, status = 'order_submitted' 
-       WHERE id = $5 AND user_id = $6 AND status = 'approved'
+       WHERE id = $5 AND user_id = $6 AND status IN ('approved', 'pending')
        RETURNING *`,
       [
         escapeHTML(order_number.trim()),
@@ -307,12 +343,17 @@ const submitOrder = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ message: "Application status changed. Please refresh and try again." });
     }
 
+    await client.query('COMMIT');
     res.status(200).json({ success: true, message: "Order submitted successfully with screenshot", data: result.rows[0] });
   } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({ message: "Server error" });
+  } finally {
+    client.release();
   }
 };
 
