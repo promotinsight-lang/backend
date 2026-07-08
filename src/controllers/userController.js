@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { addAutomaticRank } = require("../utils/userRank");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Resend } = require("resend");
@@ -1089,14 +1090,38 @@ const submitVerification = async (req, res) => {
 const getAllUsersByRole = async (req, res) => {
   try {
     const { role } = req.params;
-    // 🔥 Added ip_location to selection
+    const statsJoin = role === 'seller'
+      ? `LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*) FILTER (WHERE a.status = 'completed')::int AS completed_orders,
+             COUNT(*) FILTER (WHERE a.status IN ('rejected', 'disputed'))::int AS failed_orders,
+             COUNT(*) FILTER (WHERE a.status IN ('completed', 'rejected', 'disputed'))::int AS total_ranked_orders
+           FROM products p
+           LEFT JOIN applications a ON a.product_id = p.id
+           WHERE p.seller_id = u.id
+         ) stats ON true`
+      : `LEFT JOIN LATERAL (
+           SELECT
+             COUNT(*) FILTER (WHERE a.status = 'completed')::int AS completed_orders,
+             COUNT(*) FILTER (WHERE a.status IN ('rejected', 'disputed'))::int AS failed_orders,
+             COUNT(*) FILTER (WHERE a.status IN ('completed', 'rejected', 'disputed'))::int AS total_ranked_orders
+           FROM applications a
+           WHERE a.user_id = u.id
+         ) stats ON true`;
+
     const result = await pool.query(
-      `SELECT id, name, email, role, wallet_balance, trust_score, user_rank,
-              verification_status, is_active, is_frozen, created_at, last_ip, ip_location
-       FROM users WHERE role = $1 ORDER BY created_at DESC`,
+      `SELECT u.id, u.name, u.email, u.role, u.wallet_balance, u.trust_score, u.user_rank,
+              u.verification_status, u.is_active, u.is_frozen, u.created_at, u.last_ip, u.ip_location,
+              COALESCE(stats.completed_orders, 0) AS completed_orders,
+              COALESCE(stats.failed_orders, 0) AS failed_orders,
+              COALESCE(stats.total_ranked_orders, 0) AS total_ranked_orders
+       FROM users u
+       ${statsJoin}
+       WHERE u.role = $1
+       ORDER BY u.created_at DESC`,
       [role]
     );
-    res.status(200).json({ success: true, data: result.rows });
+    res.status(200).json({ success: true, data: result.rows.map(addAutomaticRank) });
   } catch (error) {
     console.error("ADMIN GET USERS ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -1153,7 +1178,33 @@ const getAdminUserDetailsById = async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-    res.status(200).json({ success: true, data: result.rows[0] });
+
+    const user = result.rows[0];
+    const statsResult = user.role === 'seller'
+      ? await pool.query(
+          `SELECT
+             COUNT(*) FILTER (WHERE a.status = 'completed')::int AS completed_orders,
+             COUNT(*) FILTER (WHERE a.status IN ('rejected', 'disputed'))::int AS failed_orders,
+             COUNT(*) FILTER (WHERE a.status IN ('completed', 'rejected', 'disputed'))::int AS total_ranked_orders
+           FROM products p
+           LEFT JOIN applications a ON a.product_id = p.id
+           WHERE p.seller_id = $1`,
+          [userId]
+        )
+      : await pool.query(
+          `SELECT
+             COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_orders,
+             COUNT(*) FILTER (WHERE status IN ('rejected', 'disputed'))::int AS failed_orders,
+             COUNT(*) FILTER (WHERE status IN ('completed', 'rejected', 'disputed'))::int AS total_ranked_orders
+           FROM applications
+           WHERE user_id = $1`,
+          [userId]
+        );
+
+    res.status(200).json({
+      success: true,
+      data: addAutomaticRank({ ...user, ...statsResult.rows[0] }),
+    });
   } catch (error) {
     console.error("GET ADMIN USER DETAILS ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -1254,35 +1305,6 @@ const updateTrustScore = async (req, res) => {
     res.status(200).json({ success: true, message: "Trust score updated successfully", data: result.rows[0] });
   } catch (error) {
     console.error("UPDATE TRUST SCORE ERROR:", error);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-
-const updateUserRank = async (req, res) => {
-  try {
-    const userId = req.params.id;
-    const { user_rank } = req.body;
-    const rank = String(user_rank || '').trim();
-
-    if (!rank) {
-      return res.status(400).json({ success: false, message: "User rank is required" });
-    }
-    if (rank.length > 100) {
-      return res.status(400).json({ success: false, message: "User rank must be 100 characters or less" });
-    }
-
-    const result = await pool.query(
-      "UPDATE users SET user_rank = $1 WHERE id = $2 RETURNING *",
-      [rank, userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    res.status(200).json({ success: true, message: "User rank updated successfully", data: result.rows[0] });
-  } catch (error) {
-    console.error("UPDATE USER RANK ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -1494,7 +1516,6 @@ module.exports = {
   depositFunds,
   getMyDeposits,
   updateTrustScore,
-  updateUserRank,
   submitAppeal,
   getPendingAppeals,
   resolveAppeal,

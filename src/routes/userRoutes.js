@@ -17,7 +17,6 @@ const {
   getMyDeposits,
   getPaymentSettings,
   updateTrustScore,
-  updateUserRank,
   submitAppeal,
   getPendingAppeals,
   resolveAppeal,
@@ -118,7 +117,6 @@ router.post("/appeal", protect, submitAppeal);
 router.get("/admin/role/:role", protect, authorize("admin"), getAllUsersByRole);
 router.patch("/admin/status/:id", protect, authorize("admin"), updateUserStatus);
 router.patch("/:id/trust-score", protect, authorize("admin"), updateTrustScore);
-router.patch("/:id/user-rank", protect, authorize("admin"), updateUserRank);
 router.get("/admin/user/:id", protect, authorize("admin"), getAdminUserDetailsById);
 
 router.get("/admin/appeals", protect, authorize("admin"), getPendingAppeals);
