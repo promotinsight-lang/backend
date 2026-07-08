@@ -16,6 +16,7 @@ const {
   getPublicBlogs,
   getAllBlogsAdmin,
   getBlogBySlug,
+  updateBlog,
   deleteBlog
 } = require("../controllers/blogController");
 
@@ -33,6 +34,9 @@ router.get("/public/:slug", getBlogBySlug);
 // ==========================================
 // Notun blog toiri kora (Image upload soho)
 router.post("/", protect, isAdmin, upload.single("image"), createBlog);
+
+// Existing blog edit/update korar jonno
+router.put("/:id", protect, isAdmin, upload.single("image"), updateBlog);
 
 // Admin panel-e sob blog (published + draft) eksathe dekhar jonno
 router.get("/admin/all", protect, isAdmin, getAllBlogsAdmin);

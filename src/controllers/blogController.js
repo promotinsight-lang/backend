@@ -5,7 +5,7 @@ const sanitizeHtml = require("sanitize-html");
 const sanitizeBlogContent = (content) => sanitizeHtml(content, {
   allowedTags: [
     'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'blockquote',
-    'ul', 'ol', 'li', 'a', 'h2', 'h3', 'h4', 'pre', 'code',
+    'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'pre', 'code',
     'span', 'img'
   ],
   allowedAttributes: {
@@ -32,6 +32,42 @@ cloudinary.config({
 // ==========================================
 // 🛡️ Create a New Blog Post (ADMIN)
 // ==========================================
+const uploadBlogImage = async (file) => {
+  if (!file) return null;
+
+  const uploadResult = await new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder: "promotinsight/blogs" },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    );
+    uploadStream.end(file.buffer);
+  });
+
+  return uploadResult.secure_url;
+};
+
+const createUniqueSlug = async (title, excludeId = null) => {
+  const baseSlug =
+    title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '') ||
+    `blog-${Date.now()}`;
+  let slug = baseSlug;
+  let suffix = 1;
+
+  while (true) {
+    const query = excludeId
+      ? "SELECT id FROM blogs WHERE slug = $1 AND id != $2"
+      : "SELECT id FROM blogs WHERE slug = $1";
+    const params = excludeId ? [slug, excludeId] : [slug];
+    const slugCheck = await pool.query(query, params);
+    if (slugCheck.rows.length === 0) return slug;
+    suffix += 1;
+    slug = `${baseSlug}-${suffix}`;
+  }
+};
+
 const createBlog = async (req, res) => {
   try {
     const { title, content, author_name, is_published } = req.body;
@@ -40,14 +76,7 @@ const createBlog = async (req, res) => {
       return res.status(400).json({ success: false, message: "Title and content are required." });
     }
 
-    // Create a URL-friendly slug from the title
-    let slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
-    
-    // Check if slug exists, if so, append a random number
-    const slugCheck = await pool.query("SELECT id FROM blogs WHERE slug = $1", [slug]);
-    if (slugCheck.rows.length > 0) {
-      slug = `${slug}-${Math.floor(Math.random() * 10000)}`;
-    }
+    const slug = await createUniqueSlug(title.trim());
 
     let image_url = null;
 
@@ -148,6 +177,69 @@ const getBlogBySlug = async (req, res) => {
 // ==========================================
 // 🛡️ Delete Blog Post (ADMIN)
 // ==========================================
+const updateBlog = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, content, author_name, is_published } = req.body;
+
+    if (!title || !content) {
+      return res.status(400).json({ success: false, message: "Title and content are required." });
+    }
+
+    const existing = await pool.query("SELECT * FROM blogs WHERE id = $1", [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Blog not found." });
+    }
+
+    let image_url = existing.rows[0].image_url;
+    if (req.file) {
+      try {
+        image_url = await uploadBlogImage(req.file);
+      } catch (uploadError) {
+        console.error("CLOUDINARY UPLOAD ERROR:", uploadError);
+        return res.status(500).json({ success: false, message: "Failed to upload image to Cloudinary." });
+      }
+    }
+
+    const slug = await createUniqueSlug(title.trim(), id);
+    const sanitizedContent = sanitizeBlogContent(content.trim());
+    const params = [
+      title.trim(),
+      slug,
+      sanitizedContent,
+      image_url,
+      author_name || existing.rows[0].author_name || 'Admin',
+      is_published,
+      id,
+    ];
+
+    let result;
+    try {
+      result = await pool.query(
+        `UPDATE blogs
+         SET title = $1, slug = $2, content = $3, image_url = $4, author_name = $5,
+             is_published = COALESCE($6, is_published), updated_at = CURRENT_TIMESTAMP
+         WHERE id = $7 RETURNING *`,
+        params
+      );
+    } catch (error) {
+      if (error.code !== "42703") throw error;
+      result = await pool.query(
+        `UPDATE blogs
+         SET title = $1, slug = $2, content = $3, image_url = $4, author_name = $5,
+             is_published = COALESCE($6, is_published)
+         WHERE id = $7 RETURNING *`,
+        params
+      );
+    }
+
+    res.status(200).json({ success: true, message: "Blog updated successfully!", data: result.rows[0] });
+  } catch (error) {
+    console.error("UPDATE BLOG ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error while updating blog." });
+  }
+};
+
 const deleteBlog = async (req, res) => {
   try {
     const { id } = req.params;
@@ -169,5 +261,6 @@ module.exports = {
   getPublicBlogs, 
   getAllBlogsAdmin,
   getBlogBySlug,
+  updateBlog,
   deleteBlog
 };
