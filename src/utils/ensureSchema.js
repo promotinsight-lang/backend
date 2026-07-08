@@ -15,6 +15,14 @@ const ensureSchema = async () => {
       ADD COLUMN IF NOT EXISTS verification_platforms JSONB,
       ADD COLUMN IF NOT EXISTS verification_responses JSONB
   `);
+
+  await pool.query(`
+    ALTER TABLE applications
+      ADD COLUMN IF NOT EXISTS seller_payment_transaction_id TEXT,
+      ADD COLUMN IF NOT EXISTS seller_payment_screenshot_url TEXT,
+      ADD COLUMN IF NOT EXISTS seller_payment_note TEXT,
+      ADD COLUMN IF NOT EXISTS seller_paid_at TIMESTAMP
+  `);
 };
 
 module.exports = ensureSchema;

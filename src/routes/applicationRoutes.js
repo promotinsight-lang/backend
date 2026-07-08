@@ -9,7 +9,7 @@ const {
   applyToProduct, approveApplication, rejectApplication, deleteApplicationAdmin, 
   getApplicationsByProduct, getMyApplications, submitOrder, forwardOrderToSeller, 
   approveOrder, rejectOrder, submitReview, approveReview, rejectReview,        
-  sellerApproveReview, confirmRefund, getSellerProductReviews, getAllApplicationsAdmin
+  sellerApproveReview, submitSellerPaymentProof, confirmRefund, getSellerProductReviews, getAllApplicationsAdmin
 } = require("../controllers/applicationController");
 
 // ==========================================
@@ -49,6 +49,7 @@ router.get("/all", protect, authorize("admin"), getAllApplicationsAdmin);
 // ==========================
 router.get("/seller/product/:id/reviews", protect, authorize("seller"), getSellerProductReviews);
 router.patch("/seller/:id/approve", protect, authorize("seller"), sellerActionLimiter, sellerApproveReview);
+router.patch("/seller/:id/payment-proof", protect, authorize("seller"), sellerActionLimiter, submitSellerPaymentProof);
 
 // ==========================
 // 🛠️ Dynamic Admin/Shared Routes (Bottom)

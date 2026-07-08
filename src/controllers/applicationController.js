@@ -509,6 +509,67 @@ const sellerApproveReview = async (req, res) => {
 // ==========================================
 // 💰 Confirm Refund (Admin) - 🔥 CRITICAL BUG FIX (COALESCE WALLET BALANCE)
 // ==========================================
+const submitSellerPaymentProof = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const applicationId = req.params.id;
+    const sellerId = req.user.id;
+    const { transaction_id, screenshot_url, note } = req.body;
+
+    if (!transaction_id || !transaction_id.trim() || !screenshot_url || !screenshot_url.trim()) {
+      return res.status(400).json({ success: false, message: "Transaction ID and payment screenshot are required" });
+    }
+
+    await client.query("BEGIN");
+
+    const appQuery = await client.query(
+      `SELECT a.id, a.status, p.seller_id
+       FROM applications a
+       JOIN products p ON a.product_id = p.id
+       WHERE a.id = $1
+       FOR UPDATE`,
+      [applicationId]
+    );
+
+    if (appQuery.rows.length === 0 || appQuery.rows[0].seller_id !== sellerId) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ success: false, message: "Unauthorized action." });
+    }
+
+    const validStates = ['order_submitted', 'order_approved', 'review_submitted', 'forwarded_to_seller', 'pending_refund'];
+    if (!validStates.includes(appQuery.rows[0].status)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ success: false, message: "This order is not ready for seller payment." });
+    }
+
+    const result = await client.query(
+      `UPDATE applications
+       SET seller_payment_transaction_id = $1,
+           seller_payment_screenshot_url = $2,
+           seller_payment_note = $3,
+           seller_paid_at = NOW(),
+           status = 'completed'
+       WHERE id = $4
+       RETURNING *`,
+      [
+        escapeHTML(transaction_id.trim()),
+        escapeHTML(screenshot_url.trim()),
+        note ? escapeHTML(note.trim()) : null,
+        applicationId,
+      ]
+    );
+
+    await client.query("COMMIT");
+    res.status(200).json({ success: true, message: "Payment proof submitted and order completed.", data: result.rows[0] });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("SELLER PAYMENT PROOF ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    client.release();
+  }
+};
+
 const confirmRefund = async (req, res) => {
   const client = await pool.connect();
   try {
@@ -667,8 +728,11 @@ const getSellerProductReviews = async (req, res) => {
     if (productCheck.rows.length === 0) return res.status(403).json({ message: "Unauthorized. This product does not belong to you." });
 
     const result = await pool.query(
-      `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at, 
-              u.name AS buyer_name, u.amazon_profile_url AS profile_link, u.trust_score
+      `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2,
+              a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at,
+              a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
+              u.name AS buyer_name, u.email AS buyer_email, u.amazon_profile_url AS profile_link, u.trust_score,
+              u.paypal_account, u.facebook_account, u.whatsapp_account, u.telegram_account
        FROM applications a 
        JOIN users u ON a.user_id = u.id 
        WHERE a.product_id = $1
@@ -688,11 +752,13 @@ const getSellerProductReviews = async (req, res) => {
 const getAllApplicationsAdmin = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT a.id, a.user_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
+      SELECT a.id, a.user_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment,
              a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.created_at, a.ip_address, a.ip_location,
+             a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
              p.product_name, p.image_url, p.price, p.reward,
              p.platform, p.country, p.store_name, p.search_keyword, p.instructions, p.product_link, p.seller_id, p.category,
              u.name AS buyer_name, u.email AS buyer_email, u.trust_score,
+             u.paypal_account, u.facebook_account, u.whatsapp_account, u.telegram_account,
              s.name AS seller_name, s.email AS seller_email
       FROM applications a
       JOIN products p ON a.product_id = p.id
@@ -709,6 +775,6 @@ const getAllApplicationsAdmin = async (req, res) => {
 module.exports = {
   applyToProduct, approveApplication, rejectApplication, deleteApplicationAdmin, 
   getApplicationsByProduct, getMyApplications, submitOrder, forwardOrderToSeller, 
-  approveOrder, rejectOrder, submitReview, approveReview, rejectReview,      
-  sellerApproveReview, confirmRefund, getSellerProductReviews, getAllApplicationsAdmin
+  approveOrder, rejectOrder, submitReview, approveReview, rejectReview,
+  sellerApproveReview, submitSellerPaymentProof, confirmRefund, getSellerProductReviews, getAllApplicationsAdmin
 };
