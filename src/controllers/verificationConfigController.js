@@ -3,7 +3,7 @@ const pool = require('../config/db');
 const DEFAULT_PLATFORM_FIELDS = [
   { key: 'account_name', label: 'Account Details', type: 'text', required: true, placeholder: 'Account details on this platform' },
   { key: 'profile_url', label: 'Profile URL', type: 'url', required: false, placeholder: 'https://www.amazon.com/gp/profile/...' },
-  { key: 'verification_image_url', label: 'Verification Image', type: 'image', required: false, placeholder: '' },
+  { key: 'verification_image_url', label: 'Profile Screenshot', type: 'image', required: false, placeholder: '' },
 ];
 
 const DEFAULT_GLOBAL_FIELDS = [
