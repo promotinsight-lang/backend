@@ -141,6 +141,36 @@ const DISPOSABLE_EMAIL_KEYWORDS = [
   "yopmail",
 ];
 
+const TRUSTED_EMAIL_DOMAINS = new Set([
+  "aol.com",
+  "fastmail.com",
+  "gmx.com",
+  "gmx.de",
+  "gmail.com",
+  "googlemail.com",
+  "hotmail.com",
+  "hotmail.co.uk",
+  "icloud.com",
+  "live.com",
+  "mail.com",
+  "mac.com",
+  "me.com",
+  "msn.com",
+  "outlook.com",
+  "proton.me",
+  "protonmail.com",
+  "tutanota.com",
+  "tutanota.de",
+  "tutamail.com",
+  "yahoo.com",
+  "yahoo.co.uk",
+  "yahoo.co.in",
+  "yahoo.fr",
+  "ymail.com",
+  "zoho.com",
+  "zohomail.com",
+]);
+
 const getBlockedEmailDomains = () => {
   const extraDomains = (process.env.DISPOSABLE_EMAIL_DOMAINS || "")
     .split(",")
@@ -148,6 +178,15 @@ const getBlockedEmailDomains = () => {
     .filter(Boolean);
 
   return new Set([...DISPOSABLE_EMAIL_DOMAINS, ...extraDomains]);
+};
+
+const getTrustedEmailDomains = () => {
+  const extraDomains = (process.env.ALLOWED_EMAIL_DOMAINS || "")
+    .split(",")
+    .map((domain) => domain.trim().toLowerCase())
+    .filter(Boolean);
+
+  return new Set([...TRUSTED_EMAIL_DOMAINS, ...extraDomains]);
 };
 
 const getEmailDomain = (email) => {
@@ -172,6 +211,16 @@ const isDisposableEmail = (email) => {
   if (!email) return false;
   return isBlockedEmailDomain(getEmailDomain(email));
 };
+
+const isTrustedRegistrationEmail = (email) => {
+  const domain = getEmailDomain(email);
+  if (!domain || isBlockedEmailDomain(domain)) return false;
+  return getTrustedEmailDomains().has(domain);
+};
+
+const getRegistrationEmailBlockMessage = () => (
+  "Temporary or unsupported email addresses are not allowed. Please use Gmail, Yahoo, Outlook, iCloud, Proton, Zoho, or another approved email."
+);
 
 // 🔥 NEW: IP Tracking Helper
 const getClientIp = (req) => {
@@ -327,10 +376,10 @@ const sendRegistrationOtp = async (req, res) => {
     const emailTrimmed = email.trim().toLowerCase();
 
     // 🔥 FRAUD PREVENTION: Block Temporary/Fake Emails
-    if (isDisposableEmail(emailTrimmed)) {
+    if (!isTrustedRegistrationEmail(emailTrimmed)) {
       return res.status(400).json({ 
         success: false, 
-        message: "Temporary or Fake emails are strictly prohibited on our platform. Please use a valid email address (e.g. Gmail, Yahoo)." 
+        message: getRegistrationEmailBlockMessage()
       });
     }
 
@@ -397,8 +446,8 @@ const registerUser = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid email format" });
     }
 
-    if (isDisposableEmail(emailTrimmed)) {
-      return res.status(400).json({ success: false, message: "Fake or temporary emails are not allowed." });
+    if (!isTrustedRegistrationEmail(emailTrimmed)) {
+      return res.status(400).json({ success: false, message: getRegistrationEmailBlockMessage() });
     }
 
     const cachedOtp = otpCache.get(emailTrimmed);
@@ -613,10 +662,10 @@ const socialLogin = async (req, res) => {
     }
 
     const emailTrimmed = verifiedEmail.trim().toLowerCase();
-    if (isDisposableEmail(emailTrimmed)) {
+    if (!isTrustedRegistrationEmail(emailTrimmed)) {
       return res.status(400).json({
         success: false,
-        message: "Fake or temporary emails are not allowed."
+        message: getRegistrationEmailBlockMessage()
       });
     }
 
