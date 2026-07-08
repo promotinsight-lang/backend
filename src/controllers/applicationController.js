@@ -731,8 +731,8 @@ const getSellerProductReviews = async (req, res) => {
       `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2,
               a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at,
               a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
-              u.name AS buyer_name, u.email AS buyer_email, u.amazon_profile_url AS profile_link, u.trust_score,
-              u.paypal_account, u.facebook_account, u.whatsapp_account, u.telegram_account
+              u.name AS buyer_name, u.amazon_profile_url AS profile_link, u.trust_score,
+              u.paypal_account
        FROM applications a 
        JOIN users u ON a.user_id = u.id 
        WHERE a.product_id = $1
