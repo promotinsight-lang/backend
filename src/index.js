@@ -10,6 +10,7 @@ const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const jwt = require("jsonwebtoken");
 const pool = require("./config/db");
+const ensureSchema = require("./utils/ensureSchema");
 require("dotenv").config();
 const privateChatRoutes = require('./routes/privateChatRoutes');
 const app = express();
@@ -179,10 +180,22 @@ startCronJobs();
 // ==========================================
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  console.log(`🚀 Secure Enterprise Server running on port ${PORT}`);
-  console.log(`📡 Socket.io is ready for real-time tracking!`);
-});
+const startServer = async () => {
+  try {
+    await ensureSchema();
+    console.log("Database schema is ready");
+
+    server.listen(PORT, () => {
+      console.log(`🚀 Secure Enterprise Server running on port ${PORT}`);
+      console.log(`📡 Socket.io is ready for real-time tracking!`);
+    });
+  } catch (error) {
+    console.error("Failed to prepare database schema:", error);
+    process.exit(1);
+  }
+};
+
+startServer();
 
 const parseCookieHeader = (cookieHeader = "") => (
   cookieHeader.split(";").reduce((cookies, pair) => {
