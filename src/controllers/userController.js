@@ -1091,7 +1091,7 @@ const getAllUsersByRole = async (req, res) => {
     const { role } = req.params;
     // 🔥 Added ip_location to selection
     const result = await pool.query(
-      `SELECT id, name, email, role, wallet_balance, trust_score, 
+      `SELECT id, name, email, role, wallet_balance, trust_score, user_rank,
               verification_status, is_active, is_frozen, created_at, last_ip, ip_location
        FROM users WHERE role = $1 ORDER BY created_at DESC`,
       [role]
@@ -1145,7 +1145,7 @@ const getAdminUserDetailsById = async (req, res) => {
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
               whatsapp_account, telegram_account, verification_country, verification_platforms, verification_responses,
-              trust_score, is_active, is_frozen, last_ip, ip_location
+              trust_score, user_rank, is_active, is_frozen, last_ip, ip_location
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -1254,6 +1254,35 @@ const updateTrustScore = async (req, res) => {
     res.status(200).json({ success: true, message: "Trust score updated successfully", data: result.rows[0] });
   } catch (error) {
     console.error("UPDATE TRUST SCORE ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+const updateUserRank = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { user_rank } = req.body;
+    const rank = String(user_rank || '').trim();
+
+    if (!rank) {
+      return res.status(400).json({ success: false, message: "User rank is required" });
+    }
+    if (rank.length > 100) {
+      return res.status(400).json({ success: false, message: "User rank must be 100 characters or less" });
+    }
+
+    const result = await pool.query(
+      "UPDATE users SET user_rank = $1 WHERE id = $2 RETURNING *",
+      [rank, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.status(200).json({ success: true, message: "User rank updated successfully", data: result.rows[0] });
+  } catch (error) {
+    console.error("UPDATE USER RANK ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -1465,6 +1494,7 @@ module.exports = {
   depositFunds,
   getMyDeposits,
   updateTrustScore,
+  updateUserRank,
   submitAppeal,
   getPendingAppeals,
   resolveAppeal,
