@@ -41,15 +41,136 @@ const isValidEmail = (email) => {
 };
 
 // 🔥 NEW: Block Disposable/Fake/Temporary Emails
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  "0-mail.com",
+  "0815.ru",
+  "0wnd.net",
+  "10minut.com",
+  "10minutemail.co.uk",
+  "10minutemail.com",
+  "10minutemail.de",
+  "10minutemail.net",
+  "10minutemail.org",
+  "10minutesmail.com",
+  "20minutemail.com",
+  "33mail.com",
+  "anonbox.net",
+  "anonymbox.com",
+  "binkmail.com",
+  "bugmenot.com",
+  "deadaddress.com",
+  "discard.email",
+  "discardmail.com",
+  "dispostable.com",
+  "dodgit.com",
+  "dropmail.me",
+  "emailondeck.com",
+  "fakeinbox.com",
+  "fakemail.net",
+  "getairmail.com",
+  "getnada.com",
+  "guerrillamail.biz",
+  "guerrillamail.com",
+  "guerrillamail.de",
+  "guerrillamail.info",
+  "guerrillamail.net",
+  "guerrillamail.org",
+  "guerrillamailblock.com",
+  "guerillamail.com",
+  "incognitomail.com",
+  "jetable.org",
+  "mail-temporaire.fr",
+  "mailcatch.com",
+  "maildrop.cc",
+  "mailexpire.com",
+  "mailinator.com",
+  "mailinator.net",
+  "mailinator.org",
+  "mailnesia.com",
+  "mailnull.com",
+  "mintemail.com",
+  "mohmal.com",
+  "mytrashmail.com",
+  "pookmail.com",
+  "sharklasers.com",
+  "shitmail.me",
+  "slopsbox.com",
+  "spam4.me",
+  "spambog.com",
+  "spambog.de",
+  "spambog.ru",
+  "spambox.us",
+  "spamfree24.org",
+  "spamgourmet.com",
+  "spamhole.com",
+  "spamify.com",
+  "spammotel.com",
+  "temp-mail.io",
+  "temp-mail.org",
+  "tempmail.com",
+  "tempmail.net",
+  "tempmailo.com",
+  "tempr.email",
+  "temporaryemail.net",
+  "throwawaymail.com",
+  "trash-mail.com",
+  "trashmail.com",
+  "trashmail.me",
+  "trashmail.net",
+  "trashmail.org",
+  "wegwerfmail.de",
+  "wegwerfmail.net",
+  "wegwerfmail.org",
+  "yopmail.com",
+  "yopmail.fr",
+  "yopmail.net",
+  "zehnminutenmail.de",
+]);
+
+const DISPOSABLE_EMAIL_KEYWORDS = [
+  "10minute",
+  "disposable",
+  "fakeemail",
+  "fakemail",
+  "guerrillamail",
+  "mailinator",
+  "tempmail",
+  "temporarymail",
+  "throwawaymail",
+  "trashmail",
+  "yopmail",
+];
+
+const getBlockedEmailDomains = () => {
+  const extraDomains = (process.env.DISPOSABLE_EMAIL_DOMAINS || "")
+    .split(",")
+    .map((domain) => domain.trim().toLowerCase())
+    .filter(Boolean);
+
+  return new Set([...DISPOSABLE_EMAIL_DOMAINS, ...extraDomains]);
+};
+
+const getEmailDomain = (email) => {
+  const domain = String(email || "").split("@").pop();
+  return domain ? domain.trim().toLowerCase().replace(/\.+$/, "") : "";
+};
+
+const isBlockedEmailDomain = (domain) => {
+  if (!domain) return false;
+
+  const blockedDomains = getBlockedEmailDomains();
+  if (blockedDomains.has(domain)) return true;
+
+  for (const blockedDomain of blockedDomains) {
+    if (domain.endsWith(`.${blockedDomain}`)) return true;
+  }
+
+  return DISPOSABLE_EMAIL_KEYWORDS.some((keyword) => domain.includes(keyword));
+};
+
 const isDisposableEmail = (email) => {
   if (!email) return false;
-  const domain = email.split('@')[1].toLowerCase();
-  const blockedDomains = [
-    'yopmail.com', 'mailinator.com', 'tempmail.com', '10minutemail.com', 
-    'guerrillamail.com', 'dropmail.me', 'fakemail.net', 'temp-mail.org', 
-    'throwawaymail.com', 'dispostable.com', 'maildrop.cc', 'tempmailo.com'
-  ];
-  return blockedDomains.includes(domain);
+  return isBlockedEmailDomain(getEmailDomain(email));
 };
 
 // 🔥 NEW: IP Tracking Helper
@@ -492,6 +613,13 @@ const socialLogin = async (req, res) => {
     }
 
     const emailTrimmed = verifiedEmail.trim().toLowerCase();
+    if (isDisposableEmail(emailTrimmed)) {
+      return res.status(400).json({
+        success: false,
+        message: "Fake or temporary emails are not allowed."
+      });
+    }
+
     const providerUid = decodedToken.uid;
     const verifiedName = decodedToken.name || decodedToken.email?.split("@")[0] || "User";
     
