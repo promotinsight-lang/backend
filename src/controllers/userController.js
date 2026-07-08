@@ -890,7 +890,8 @@ const submitVerification = async (req, res) => {
 
       for (const field of globalFields) {
         const val = globalData[field.key];
-        if (field.required && (!val || !String(val).trim())) {
+        const isOptionalContactField = field.key === 'whatsapp_account';
+        if (field.required && !isOptionalContactField && (!val || !String(val).trim())) {
           return res.status(400).json({
             success: false,
             message: `${field.label} is required.`,
@@ -912,7 +913,8 @@ const submitVerification = async (req, res) => {
         const platformValues = platData[platformName] || {};
         for (const field of platFields) {
           const val = platformValues[field.key];
-          if (field.required && (!val || !String(val).trim())) {
+          const isOptionalPlatformField = ['profile_url', 'amazon_profile_url', 'verification_image_url', 'image_url'].includes(field.key);
+          if (field.required && !isOptionalPlatformField && (!val || !String(val).trim())) {
             return res.status(400).json({
               success: false,
               message: `${platformName}: ${field.label} is required.`,
@@ -949,10 +951,10 @@ const submitVerification = async (req, res) => {
       verificationPlatforms = JSON.stringify(platforms);
       verificationResponses = JSON.stringify({ global: globalData, platforms: platData });
 
-      if (!paypal || !whatsapp) {
+      if (!paypal) {
         return res.status(400).json({
           success: false,
-          message: 'PayPal email and WhatsApp number are required.',
+          message: 'PayPal email is required.',
         });
       }
       if (amazonUrl && !isValidURL(amazonUrl)) {
@@ -967,14 +969,14 @@ const submitVerification = async (req, res) => {
       whatsapp = whatsapp_account;
       telegram = telegram_account;
 
-      if (!amazonLoc || !amazonAcc || !amazonUrl || !paypal || !whatsapp) {
+      if (!amazonLoc || !amazonAcc || !paypal) {
         return res.status(400).json({
           success: false,
-          message: 'Amazon info, PayPal info, and WhatsApp number are required!',
+          message: 'Platform account info and PayPal info are required!',
         });
       }
 
-      if (!isValidURL(amazonUrl)) {
+      if (amazonUrl && !isValidURL(amazonUrl)) {
         return res.status(400).json({ success: false, message: 'Amazon profile must be a valid URL link.' });
       }
     }
@@ -986,9 +988,9 @@ const submitVerification = async (req, res) => {
     const profileUrlForDup = amazonUrl || '';
     const duplicateCheck = await pool.query(
       `SELECT id FROM users
-       WHERE (whatsapp_account = $1 OR ($2 <> '' AND amazon_profile_url = $2))
+       WHERE (($1 <> '' AND whatsapp_account = $1) OR ($2 <> '' AND amazon_profile_url = $2))
        AND id != $3`,
-      [whatsapp.trim(), profileUrlForDup.trim(), userId]
+      [whatsapp ? whatsapp.trim() : '', profileUrlForDup.trim(), userId]
     );
 
     if (duplicateCheck.rows.length > 0) {
@@ -1005,7 +1007,7 @@ const submitVerification = async (req, res) => {
       amazonUrl ? amazonUrl.trim() : '',
       paypal.trim(),
       facebook,
-      whatsapp.trim(),
+      whatsapp ? whatsapp.trim() : '',
       telegram,
       userId,
     ];

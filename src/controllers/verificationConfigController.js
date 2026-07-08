@@ -1,13 +1,14 @@
 const pool = require('../config/db');
 
 const DEFAULT_PLATFORM_FIELDS = [
-  { key: 'account_name', label: 'Account Name', type: 'text', required: true, placeholder: 'e.g. John Smith' },
-  { key: 'profile_url', label: 'Profile URL', type: 'url', required: true, placeholder: 'https://www.amazon.com/gp/profile/...' },
+  { key: 'account_name', label: 'Account Details', type: 'text', required: true, placeholder: 'Account details on this platform' },
+  { key: 'profile_url', label: 'Profile URL', type: 'url', required: false, placeholder: 'https://www.amazon.com/gp/profile/...' },
+  { key: 'verification_image_url', label: 'Verification Image', type: 'image', required: false, placeholder: '' },
 ];
 
 const DEFAULT_GLOBAL_FIELDS = [
   { key: 'paypal_account', label: 'PayPal Email Address', type: 'email', required: true, placeholder: 'yourname@email.com' },
-  { key: 'whatsapp_account', label: 'WhatsApp Number', type: 'tel', required: true, placeholder: '+1 555 123 4567' },
+  { key: 'whatsapp_account', label: 'WhatsApp Number', type: 'tel', required: false, placeholder: '+1 555 123 4567' },
   { key: 'facebook_account', label: 'Facebook Profile URL', type: 'url', required: false, placeholder: 'https://facebook.com/your.profile' },
   { key: 'telegram_account', label: 'Telegram Username', type: 'text', required: false, placeholder: '@yourusername' },
 ];
@@ -44,7 +45,7 @@ const sanitizeFields = (fields) =>
   (Array.isArray(fields) ? fields : []).map((f, i) => ({
     key: String(f.key || `field_${i}`).trim().replace(/\s+/g, '_'),
     label: String(f.label || f.key || 'Field').trim(),
-    type: ['text', 'email', 'url', 'tel'].includes(f.type) ? f.type : 'text',
+    type: ['text', 'email', 'url', 'tel', 'image'].includes(f.type) ? f.type : 'text',
     required: Boolean(f.required),
     placeholder: f.placeholder ? String(f.placeholder) : '',
   }));
