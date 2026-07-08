@@ -1,0 +1,2 @@
+ALTER TABLE users
+  ALTER COLUMN trust_score SET DEFAULT 0;

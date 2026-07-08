@@ -524,9 +524,9 @@ const registerUser = async (req, res) => {
 
     // 🔥 Add IP, Location, Referral Code, and Referrer ID to insertion
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING id, name, email, role, verification_status, wallet_balance`,
+      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance, trust_score)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)
+       RETURNING id, name, email, role, verification_status, wallet_balance, trust_score`,
       [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById, registrationBonus]
     );
 
@@ -741,9 +741,9 @@ if (existingUser.rows.length > 0) {
 
       // 🔥 Insert IP, Location, and Referral Data for new social login user
       const newUser = await pool.query(
-        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, name, email, role, verification_status, wallet_balance`,
+        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance, trust_score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)
+         RETURNING id, name, email, role, verification_status, wallet_balance, trust_score`,
         [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById, registrationBonus]
       );
       
