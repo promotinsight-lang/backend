@@ -1112,7 +1112,8 @@ const getAdminUserDetailsById = async (req, res) => {
       `SELECT id, name, email, role, wallet_balance, created_at, 
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
-              whatsapp_account, telegram_account, trust_score, is_active, is_frozen, last_ip, ip_location
+              whatsapp_account, telegram_account, verification_country, verification_platforms, verification_responses,
+              trust_score, is_active, is_frozen, last_ip, ip_location
        FROM users WHERE id = $1`,
       [userId]
     );

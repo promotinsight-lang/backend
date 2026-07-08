@@ -125,7 +125,8 @@ const updatePaymentSetting = async (req, res) => {
 const getPendingVerifications = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, name, email, amazon_account, amazon_location, amazon_profile_url, paypal_account, facebook_account, whatsapp_account, telegram_account, verification_status 
+      SELECT id, name, email, amazon_account, amazon_location, amazon_profile_url, paypal_account, facebook_account, whatsapp_account, telegram_account, verification_status,
+             verification_country, verification_platforms, verification_responses
       FROM users 
       WHERE verification_status = 'pending'
       ORDER BY created_at DESC
