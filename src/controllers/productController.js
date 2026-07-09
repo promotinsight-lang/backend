@@ -1,3 +1,4 @@
+const net = require("net");
 const pool = require("../config/db");
 
 const parseAmount = (value) => {
@@ -8,6 +9,66 @@ const parseAmount = (value) => {
 const parseQuantity = (value) => {
   const quantity = Number.parseInt(value, 10);
   return Number.isInteger(quantity) ? quantity : NaN;
+};
+
+const isPrivateIp = (hostname) => {
+  if (!net.isIP(hostname)) return false;
+  if (hostname === "::1" || hostname === "127.0.0.1") return true;
+  if (net.isIP(hostname) === 4) {
+    const parts = hostname.split(".").map(Number);
+    return parts[0] === 10 ||
+      parts[0] === 127 ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168) ||
+      (parts[0] === 169 && parts[1] === 254) ||
+      parts[0] === 0;
+  }
+  const normalized = hostname.toLowerCase();
+  return normalized === "::" ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80:");
+};
+
+const validateExternalImageUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    const hostname = parsed.hostname.toLowerCase();
+    if (parsed.protocol !== "https:") return false;
+    if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") || isPrivateIp(hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const publicProductFields = (product) => ({
+  id: product.id,
+  product_name: product.product_name,
+  image_url: product.image_url,
+  price: product.price,
+  reward: product.reward,
+  platform: product.platform,
+  country: product.country,
+  category: product.category,
+  status: product.status,
+  required_orders: product.required_orders,
+  application_count: product.application_count,
+  seller_name: product.seller_name,
+});
+
+const sellerProductFields = (product) => ({
+  ...product,
+  seller_email: undefined,
+  seller_wallet_balance: undefined,
+});
+
+const serializeProductForUser = (product, user) => {
+  if (user?.role === "admin") return product;
+  if (user?.role === "seller" && String(product.seller_id) === String(user.id)) {
+    return sellerProductFields(product);
+  }
+  return publicProductFields(product);
 };
 
 const fetchFeeConfig = async (client, country, platform) => {
@@ -95,6 +156,9 @@ const createProduct = async (req, res) => {
     if (!image_url) {
       return res.status(400).json({ success: false, message: "Product image is required" });
     }
+    if (!validateExternalImageUrl(image_url)) {
+      return res.status(400).json({ success: false, message: "Product image must be a valid public HTTPS URL" });
+    }
 
     const priceVal = parseAmount(price);
     const rewardVal = parseAmount(reward);
@@ -165,7 +229,7 @@ const createProduct = async (req, res) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending', $14, $15)
       RETURNING *`,
       [
-        image_url, product_name.trim(), priceVal, store_name.trim(), search_keyword.trim(), 
+        image_url.trim(), product_name.trim(), priceVal, store_name.trim(), search_keyword.trim(),
         resolvedReward, product_link.trim(), safeCountry, qtyVal, 
         instructions ? instructions.trim() : '', sellerId, safePlatform, 
         category ? category.trim() : 'General', totalRequiredDepositUSD, commissionPerOrderLocal
@@ -344,7 +408,8 @@ const getPublicProducts = async (req, res) => {
       GROUP BY p.id
       ORDER BY p.created_at DESC
     `);
-    res.status(200).json({ success: true, count: result.rows.length, data: result.rows });
+    const data = result.rows.map((product) => serializeProductForUser(product, req.user));
+    res.status(200).json({ success: true, count: data.length, data });
   } catch (error) {
     console.error("GET PUBLIC PRODUCTS ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
@@ -366,7 +431,8 @@ const getProducts = async (req, res) => {
       GROUP BY p.id, u.name, u.email, u.wallet_balance
       ORDER BY p.created_at DESC
     `);
-    res.status(200).json({ success: true, count: result.rows.length, data: result.rows });
+    const data = result.rows.map((product) => serializeProductForUser(product, req.user));
+    res.status(200).json({ success: true, count: data.length, data });
   } catch (error) {
     res.status(500).json({ success: false, message: "Server error" });
   }
@@ -550,34 +616,21 @@ const getProductById = async (req, res) => {
     
     if (productResult.rows.length === 0) return res.status(404).json({ success: false, message: 'Product not found' });
     
-    let product = productResult.rows[0];
+    const product = productResult.rows[0];
 
-    if (userRole === 'admin' || userRole === 'seller') {
-        return res.status(200).json({ success: true, data: product });
+    if (userRole === 'admin') {
+      return res.status(200).json({ success: true, data: product });
+    }
+
+    if (userRole === 'seller') {
+      if (String(product.seller_id) !== String(userId)) {
+        return res.status(403).json({ success: false, message: "Access denied" });
+      }
+      return res.status(200).json({ success: true, data: sellerProductFields(product) });
     }
 
     if (userRole === 'buyer') {
-        const appResult = await pool.query(
-            `SELECT status FROM applications WHERE user_id = $1 AND product_id = $2`,
-            [userId, productId]
-        );
-
-        const hasApplied = appResult.rows.length > 0;
-        const isApproved = hasApplied && appResult.rows[0].status === 'approved';
-
-        if (isApproved) {
-            delete product.product_link; 
-            delete product.seller_id; 
-            return res.status(200).json({ success: true, data: product });
-        } else {
-            return res.status(200).json({
-                success: true,
-                data: {
-                    id: product.id, image_url: product.image_url, price: product.price,
-                    reward: product.reward, country: product.country, category: product.category, status: product.status
-                }
-            });
-        }
+      return res.status(200).json({ success: true, data: publicProductFields(product) });
     }
     res.status(403).json({ success: false, message: "Access denied" });
   } catch (error) {

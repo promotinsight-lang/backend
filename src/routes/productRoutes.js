@@ -2,13 +2,16 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 const rateLimit = require("express-rate-limit");
+const path = require("path");
+
+const uploadsDir = path.resolve(__dirname, "..", "..", "uploads");
 
 // ==========================================
 // 🛡️ Secure File Upload Configuration (Multer)
 // ==========================================
 const storage = multer.diskStorage({
   destination: function (req, file, cb) { 
-    cb(null, 'uploads/'); 
+    cb(null, uploadsDir);
   },
   filename: function (req, file, cb) { 
     const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');

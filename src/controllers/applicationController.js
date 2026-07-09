@@ -10,10 +10,14 @@ const escapeHTML = (str) => {
 };
 
 // 🔥 IP Tracking Helper
+const normalizeClientIp = (ip) => {
+  if (!ip) return "Unknown";
+  const normalized = String(ip).replace(/^::ffff:/, "").trim();
+  return normalized || "Unknown";
+};
+
 const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-  const ip = forwarded ? forwarded.split(/, /)[0] : req.socket.remoteAddress;
-  return ip || 'Unknown';
+  return normalizeClientIp(req.ip || req.socket?.remoteAddress);
 };
 
 // 🔥 Automated IP to Location Resolver

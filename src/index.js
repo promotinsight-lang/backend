@@ -9,12 +9,21 @@ const helmet = require("helmet");
 const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const jwt = require("jsonwebtoken");
+const fs = require("fs");
+const path = require("path");
 const pool = require("./config/db");
 const ensureSchema = require("./utils/ensureSchema");
 require("dotenv").config();
 const privateChatRoutes = require('./routes/privateChatRoutes');
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
+
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173,https://promotinsight.com")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const uploadsDir = path.resolve(__dirname, "..", "uploads");
+fs.mkdirSync(uploadsDir, { recursive: true });
 
 // ==========================================
 // 📡 CREATE HTTP SERVER & INIT SOCKET.IO
@@ -22,7 +31,7 @@ app.set('trust proxy', 1);
 const server = http.createServer(app); 
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:5173", "https://promotinsight.com"], 
+    origin: allowedOrigins,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true 
   }
@@ -38,11 +47,31 @@ app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
 
 // 2. CORS Setup
 app.use(cors({
-    origin: ["http://localhost:5173", "https://promotinsight.com"],
+    origin: allowedOrigins,
     credentials: true,  // <--- এখানে একটি কমা (,) যুক্ত করা হয়েছে
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type']
 }));
+
+app.use((req, res, next) => {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+
+  const requestOrigin = req.get("origin") || req.get("referer");
+  if (!requestOrigin) {
+    return process.env.NODE_ENV === "production"
+      ? res.status(403).json({ success: false, message: "Request origin required" })
+      : next();
+  }
+
+  try {
+    const origin = new URL(requestOrigin).origin;
+    if (allowedOrigins.includes(origin)) return next();
+  } catch {
+    return res.status(403).json({ success: false, message: "Invalid request origin" });
+  }
+
+  return res.status(403).json({ success: false, message: "Request origin not allowed" });
+});
 
 // 3. Body Parser
 app.use(express.json({ limit: "10kb" }));
@@ -64,7 +93,7 @@ app.use("/api", globalLimiter);
 // ==========================================
 // 📁 STATIC FOLDER (Images)
 // ==========================================
-app.use("/uploads", express.static("uploads"));
+app.use("/uploads", express.static(uploadsDir));
 
 // ==========================================
 // 🔴 SOCKET.IO REAL-TIME TRACKING LOGIC
@@ -209,15 +238,6 @@ const parseCookieHeader = (cookieHeader = "") => (
 );
 
 const getSocketToken = (socket) => {
-  if (socket.handshake.auth?.token) {
-    return socket.handshake.auth.token;
-  }
-
-  const authHeader = socket.handshake.headers.authorization;
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    return authHeader.split(" ")[1];
-  }
-
   const cookies = parseCookieHeader(socket.handshake.headers.cookie);
   return cookies.token;
 };

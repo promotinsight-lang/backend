@@ -69,6 +69,14 @@ const financialLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+const contactSupportLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { success: false, message: "Too many support requests. Please try again after 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ==========================
 // 🔐 Authentication Routes (Public)
 // ==========================
@@ -90,7 +98,7 @@ router.patch("/reset-password/:id/:token", passwordResetLimiter, resetPassword);
 // ==========================
 // 📧 Support & Contact Route (🔥 NEW ROUTE)
 // ==========================
-router.post("/contact-support", sendContactEmail);
+router.post("/contact-support", contactSupportLimiter, sendContactEmail);
 
 // ==========================
 // 👤 User Profile & Verification

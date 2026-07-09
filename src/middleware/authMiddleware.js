@@ -1,17 +1,18 @@
 const jwt = require("jsonwebtoken");
 const pool = require("../config/db");
 
+const getClearCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+});
+
 const protect = async (req, res, next) => {
   try {
     let token;
 
-    // 1. Primary Secure Method: Read from HttpOnly Cookie
     if (req.cookies && req.cookies.token) {
       token = req.cookies.token;
-    } 
-    // 2. Fallback Method: Authorization header (For Mobile Apps / Postman testing)
-    else if (req.headers.authorization && req.headers.authorization.startsWith("Bearer ")) {
-      token = req.headers.authorization.split(" ")[1];
     }
 
     if (!token) {
@@ -30,7 +31,7 @@ const protect = async (req, res, next) => {
 
     if (userCheck.rows.length === 0) {
       // Clear cookie if user doesn't exist anymore
-      res.clearCookie('token');
+      res.clearCookie('token', getClearCookieOptions());
       return res.status(401).json({ success: false, message: "User no longer exists in the system" });
     }
 
@@ -38,7 +39,7 @@ const protect = async (req, res, next) => {
 
     // Global Ban Check: Instantly block access across all protected routes
     if (user.is_active === false) {
-      res.clearCookie('token');
+      res.clearCookie('token', getClearCookieOptions());
       return res.status(403).json({ 
         success: false, 
         message: "Your account has been deactivated. Please contact support via appeal." 
@@ -57,7 +58,7 @@ const protect = async (req, res, next) => {
   } catch (error) {
     console.error("AUTH ERROR:", error.message);
     // Clear cookie on invalid/expired token to force re-login
-    res.clearCookie('token');
+    res.clearCookie('token', getClearCookieOptions());
     res.status(401).json({ success: false, message: "Not authorized, token failed or expired" });
   }
 };

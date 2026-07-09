@@ -224,10 +224,14 @@ const getRegistrationEmailBlockMessage = () => (
 );
 
 // 🔥 NEW: IP Tracking Helper
+const normalizeClientIp = (ip) => {
+  if (!ip) return "Unknown";
+  const normalized = String(ip).replace(/^::ffff:/, "").trim();
+  return normalized || "Unknown";
+};
+
 const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-  const ip = forwarded ? forwarded.split(/, /)[0] : req.socket.remoteAddress;
-  return ip || 'Unknown';
+  return normalizeClientIp(req.ip || req.socket?.remoteAddress);
 };
 
 // 🔥 PREMIUM: Automated IP to Location Resolver
@@ -248,9 +252,29 @@ const getIpLocation = async (ip) => {
 const getCookieOptions = () => ({
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production', 
-  sameSite: 'strict', 
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000 
 });
+
+const getClearCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+});
+
+const escapeHtml = (value) => String(value || "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+const stripHeaderUnsafeChars = (value) => String(value || "").replace(/[\r\n]/g, " ").trim();
+
+const validateLength = (value, min, max) => {
+  const text = String(value || "").trim();
+  return text.length >= min && text.length <= max;
+};
 
 const maskEmail = (email) => {
   if (!email) return "Unknown";
@@ -562,7 +586,6 @@ const registerUser = async (req, res) => {
     res.status(201).json({ 
       success: true,
       message: "User registered successfully", 
-      token, 
       user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance } 
     });
 
@@ -637,7 +660,6 @@ const loginUser = async (req, res) => {
     res.json({
       success: true,
       message: "Login successful",
-      token, 
       user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance },
     });
 
@@ -781,7 +803,6 @@ if (existingUser.rows.length > 0) {
     res.status(200).json({
       success: true,
       message: `${provider.toUpperCase()} login successful`,
-      token, 
       user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance },
     });
 
@@ -795,11 +816,7 @@ if (existingUser.rows.length > 0) {
 // 🚪 Logout User
 // =======================
 const logoutUser = (req, res) => {
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict'
-  });
+  res.clearCookie('token', getClearCookieOptions());
   res.status(200).json({ success: true, message: "Logged out successfully" });
 };
 
@@ -1468,26 +1485,35 @@ const resetPassword = async (req, res) => {
 // ==========================================
 const sendContactEmail = async (req, res) => {
   try {
-    const { name, email, message } = req.body;
+    const { name, email, subject, message } = req.body;
+    const safeName = stripHeaderUnsafeChars(name);
+    const safeEmail = stripHeaderUnsafeChars(email).toLowerCase();
+    const safeSubject = stripHeaderUnsafeChars(subject || "Contact support request");
+    const safeMessage = String(message || "").trim();
 
-    if (!name || !email || !message) {
-      return res.status(400).json({ success: false, message: "All fields are required" });
+    if (!validateLength(safeName, 1, 80) || !validateLength(safeEmail, 3, 254) || !validateLength(safeSubject, 1, 120) || !validateLength(safeMessage, 1, 2000)) {
+      return res.status(400).json({ success: false, message: "Please provide a valid name, email, subject, and message." });
+    }
+
+    if (!isValidEmail(safeEmail)) {
+      return res.status(400).json({ success: false, message: "Please provide a valid email address." });
     }
 
     const { data, error } = await resend.emails.send({
       from: 'PromotInsight Support <support@promotinsight.com>',
-      replyTo: email, 
+      replyTo: safeEmail,
       to: 'promotinsight@gmail.com', // Ei email e apni support message gulo paben
-      subject: `New Support Request from ${name}`,
+      subject: `New Support Request: ${safeSubject}`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
           <div style="background-color: #ffffff; padding: 30px; border-radius: 10px; max-width: 600px; border-top: 5px solid #0066ff;">
             <h2 style="color: #333;">New Support Request</h2>
-            <p><strong>Name:</strong> ${name}</p>
-            <p><strong>Email:</strong> ${email}</p>
+            <p><strong>Name:</strong> ${escapeHtml(safeName)}</p>
+            <p><strong>Email:</strong> ${escapeHtml(safeEmail)}</p>
+            <p><strong>Subject:</strong> ${escapeHtml(safeSubject)}</p>
             <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
             <p><strong>Message:</strong></p>
-            <p style="background: #f9f9f9; padding: 15px; border-radius: 5px; color: #555;">${message}</p>
+            <p style="background: #f9f9f9; padding: 15px; border-radius: 5px; color: #555; white-space: pre-wrap;">${escapeHtml(safeMessage)}</p>
           </div>
         </div>
       `

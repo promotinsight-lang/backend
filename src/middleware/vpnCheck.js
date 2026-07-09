@@ -2,6 +2,12 @@ const axios = require('axios');
 
 // ইন-মেমরি ক্যাশ (একই আইপি বারবার চেক করে API লিমিট যেন শেষ না হয়)
 const ipCache = new Map(); 
+let warnedMissingProxycheckKey = false;
+
+const normalizeClientIp = (ip) => {
+  if (!ip) return "";
+  return String(ip).replace(/^::ffff:/, "").trim();
+};
 
 // প্রতি ১ ঘণ্টা পর পর ক্যাশ ক্লিন হবে মেমরি বাঁচাতে
 setInterval(() => {
@@ -16,13 +22,10 @@ const blockVPNAndProxy = async (req, res, next) => {
 
   try {
     // ইউজারের আইপি বের করা
-    let clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    if (clientIp && clientIp.includes(',')) {
-      clientIp = clientIp.split(',')[0].trim();
-    }
+    const clientIp = normalizeClientIp(req.ip || req.socket?.remoteAddress);
 
     // আইপিটি Localhost হলে স্কিপ করবে
-    if (clientIp === '::1' || clientIp === '127.0.0.1') {
+    if (!clientIp || clientIp === '::1' || clientIp === '127.0.0.1') {
       return next();
     }
 
@@ -39,10 +42,17 @@ const blockVPNAndProxy = async (req, res, next) => {
     }
 
     // 🔥 আপনার API Key দিয়ে Proxycheck কল করা
-    const API_KEY = process.env.PROXYCHECK_API_KEY || 'x91h50-h98680-g2g527-rf98n4'; 
-    const url = `http://proxycheck.io/v2/${clientIp}?key=${API_KEY}&vpn=1&asn=1`;
+    const API_KEY = process.env.PROXYCHECK_API_KEY;
+    if (!API_KEY) {
+      if (!warnedMissingProxycheckKey) {
+        console.warn("PROXYCHECK_API_KEY is not configured; skipping external VPN/proxy check.");
+        warnedMissingProxycheckKey = true;
+      }
+      return next();
+    }
+    const url = `https://proxycheck.io/v2/${encodeURIComponent(clientIp)}?key=${encodeURIComponent(API_KEY)}&vpn=1&asn=1`;
 
-    const response = await axios.get(url);
+    const response = await axios.get(url, { timeout: 3000 });
     const data = response.data;
 
     if (data[clientIp] && data[clientIp].proxy === 'yes') {
