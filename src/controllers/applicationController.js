@@ -31,6 +31,30 @@ const getIpLocation = async (ip) => {
   }
 };
 
+const creditBuyerRewardOnce = async (client, { userId, reward, applicationId }) => {
+  const buyerReward = parseFloat(reward) || 0;
+  if (buyerReward <= 0) return;
+
+  await client.query(
+    `WITH inserted_reward AS (
+       INSERT INTO transactions (user_id, amount, type, description, status, reference_id)
+       VALUES ($1, $2, 'refund', $3, 'completed', $4)
+       ON CONFLICT DO NOTHING
+       RETURNING amount
+     )
+     UPDATE users
+     SET wallet_balance = COALESCE(wallet_balance, 0) + (SELECT amount FROM inserted_reward)
+     WHERE id = $1
+       AND EXISTS (SELECT 1 FROM inserted_reward)`,
+    [
+      userId,
+      buyerReward,
+      `Buyer reward for seller-paid Application #${applicationId}`,
+      `seller_reward_${applicationId}`,
+    ]
+  );
+};
+
 const updateApplicationStatus = async (req, res, options) => {
   const client = await pool.connect();
   try {
@@ -244,7 +268,7 @@ const getApplicationsByProduct = async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT a.id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
+      `SELECT a.id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
               a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at, a.ip_address, a.ip_location,
               u.name, u.email 
        FROM applications a JOIN users u ON a.user_id = u.id WHERE a.product_id = $1 ORDER BY a.created_at DESC`,
@@ -264,7 +288,7 @@ const getMyApplications = async (req, res) => {
     const userId = req.user.id;
     const result = await pool.query(
       `SELECT 
-         a.id AS application_id, a.status AS application_status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment,
+         a.id AS application_id, a.status AS application_status, a.order_number, a.order_total_amount, a.order_paypal_address, a.screenshot_url, a.screenshot_url_2, a.order_comment,
          a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at AS applied_on,
          a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
          p.id AS product_id, p.product_name, p.image_url, p.price, p.reward, p.country, p.platform, p.store_name, p.search_keyword, p.instructions, p.category
@@ -285,11 +309,20 @@ const submitOrder = async (req, res) => {
   const client = await pool.connect();
   try {
     const applicationId = req.params.id;
-    const { order_number, screenshot_url, screenshot_url_2, order_comment } = req.body;
+    const { order_number, order_total_amount, order_paypal_address, screenshot_url, screenshot_url_2, order_comment } = req.body;
     const userId = req.user.id;
 
     if (!order_number || order_number.trim() === '') {
       return res.status(400).json({ message: "Order number is required" });
+    }
+
+    const parsedOrderTotal = Number(order_total_amount);
+    if (!Number.isFinite(parsedOrderTotal) || parsedOrderTotal <= 0) {
+      return res.status(400).json({ message: "Order total amount is required" });
+    }
+
+    if (!order_paypal_address || order_paypal_address.trim() === '') {
+      return res.status(400).json({ message: "PayPal email is required" });
     }
 
     await client.query('BEGIN');
@@ -330,11 +363,13 @@ const submitOrder = async (req, res) => {
 
     const result = await client.query(
       `UPDATE applications 
-       SET order_number = $1, screenshot_url = $2, screenshot_url_2 = $3, order_comment = $4, status = 'order_submitted' 
-       WHERE id = $5 AND user_id = $6 AND status IN ('approved', 'pending')
+       SET order_number = $1, order_total_amount = $2, order_paypal_address = $3, screenshot_url = $4, screenshot_url_2 = $5, order_comment = $6, status = 'order_submitted' 
+       WHERE id = $7 AND user_id = $8 AND status IN ('approved', 'pending')
        RETURNING *`,
       [
         escapeHTML(order_number.trim()),
+        parsedOrderTotal.toFixed(2),
+        escapeHTML(order_paypal_address.trim()),
         screenshot_url ? escapeHTML(screenshot_url.trim()) : null,
         screenshot_url_2 ? escapeHTML(screenshot_url_2.trim()) : null,
         order_comment ? escapeHTML(order_comment.trim()) : null,
@@ -471,7 +506,7 @@ const sellerApproveReview = async (req, res) => {
     await client.query("BEGIN");
 
     const appQuery = await client.query(
-      `SELECT a.id, a.status, p.seller_id, p.category 
+      `SELECT a.id, a.status, a.user_id, p.seller_id, p.category, p.reward 
        FROM applications a JOIN products p ON a.product_id = p.id 
        WHERE a.id = $1 FOR UPDATE`, 
       [applicationId]
@@ -495,6 +530,11 @@ const sellerApproveReview = async (req, res) => {
       await client.query("COMMIT");
       return res.json({ success: true, message: "Verified by Seller. Sent to Admin for final refund processing." });
     } else {
+      await creditBuyerRewardOnce(client, {
+        userId: app.user_id,
+        reward: app.reward,
+        applicationId,
+      });
       await client.query(`UPDATE applications SET status = 'completed' WHERE id = $1`, [applicationId]);
       await client.query("COMMIT");
       return res.json({ success: true, message: "Approved successfully." });
@@ -524,7 +564,7 @@ const submitSellerPaymentProof = async (req, res) => {
     await client.query("BEGIN");
 
     const appQuery = await client.query(
-      `SELECT a.id, a.status, p.seller_id
+      `SELECT a.id, a.status, a.user_id, p.seller_id, p.reward
        FROM applications a
        JOIN products p ON a.product_id = p.id
        WHERE a.id = $1
@@ -542,6 +582,13 @@ const submitSellerPaymentProof = async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(400).json({ success: false, message: "This order is not ready for seller payment." });
     }
+
+    const app = appQuery.rows[0];
+    await creditBuyerRewardOnce(client, {
+      userId: app.user_id,
+      reward: app.reward,
+      applicationId,
+    });
 
     const result = await client.query(
       `UPDATE applications
@@ -731,6 +778,7 @@ const getSellerProductReviews = async (req, res) => {
     const result = await pool.query(
       `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2,
               a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at,
+              a.order_total_amount, a.order_paypal_address,
               a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
               u.name AS buyer_name, u.amazon_profile_url AS profile_link, u.trust_score,
               u.paypal_account
@@ -753,7 +801,7 @@ const getSellerProductReviews = async (req, res) => {
 const getAllApplicationsAdmin = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT a.id, a.user_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2, a.order_comment,
+      SELECT a.id, a.user_id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.screenshot_url, a.screenshot_url_2, a.order_comment,
              a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.created_at, a.ip_address, a.ip_location,
              a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
              p.product_name, p.image_url, p.price, p.reward,
