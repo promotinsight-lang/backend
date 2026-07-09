@@ -55,6 +55,59 @@ const creditBuyerRewardOnce = async (client, { userId, reward, applicationId }) 
   );
 };
 
+const creditSellerReferralBonusIfEligible = async (client, sellerId) => {
+  if (!sellerId) return;
+
+  const sellerStats = await client.query(
+    `SELECT u.referred_by, COUNT(a.id)::int AS completed_orders
+     FROM users u
+     LEFT JOIN products p ON p.seller_id = u.id
+     LEFT JOIN applications a ON a.product_id = p.id AND a.status = 'completed'
+     WHERE u.id = $1 AND u.role = 'seller'
+     GROUP BY u.id, u.referred_by`,
+    [sellerId]
+  );
+
+  if (sellerStats.rows.length === 0) return;
+
+  const seller = sellerStats.rows[0];
+  const completedOrders = parseInt(seller.completed_orders, 10) || 0;
+  if (!seller.referred_by || completedOrders < 5) return;
+
+  const referralCheck = await client.query(
+    `SELECT r.referrer_id, GREATEST(COALESCE(r.reward_amount, 0), 15)::numeric AS reward_amount
+     FROM referrals r
+     JOIN users referrer ON referrer.id = r.referrer_id
+     WHERE r.referrer_id = $1
+       AND r.referred_id = $2
+       AND r.status = 'pending'
+       AND referrer.role = 'buyer'
+     FOR UPDATE OF r`,
+    [seller.referred_by, sellerId]
+  );
+
+  if (referralCheck.rows.length === 0) return;
+
+  const referral = referralCheck.rows[0];
+  const rewardAmount = parseFloat(referral.reward_amount) || 15;
+
+  await client.query(
+    `UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2`,
+    [rewardAmount, referral.referrer_id]
+  );
+
+  await client.query(
+    `UPDATE referrals SET status = 'completed', reward_amount = $1, updated_at = CURRENT_TIMESTAMP WHERE referrer_id = $2 AND referred_id = $3`,
+    [rewardAmount, referral.referrer_id, sellerId]
+  );
+
+  await client.query(
+    `INSERT INTO transactions (user_id, amount, type, description, status)
+     VALUES ($1, $2, 'referral_bonus', $3, 'completed')`,
+    [referral.referrer_id, rewardAmount, `Seller referral bonus after referred seller completed 5 orders`]
+  );
+};
+
 const updateApplicationStatus = async (req, res, options) => {
   const client = await pool.connect();
   try {
@@ -536,6 +589,7 @@ const sellerApproveReview = async (req, res) => {
         applicationId,
       });
       await client.query(`UPDATE applications SET status = 'completed' WHERE id = $1`, [applicationId]);
+      await creditSellerReferralBonusIfEligible(client, app.seller_id);
       await client.query("COMMIT");
       return res.json({ success: true, message: "Approved successfully." });
     }
@@ -607,6 +661,8 @@ const submitSellerPaymentProof = async (req, res) => {
       ]
     );
 
+    await creditSellerReferralBonusIfEligible(client, app.seller_id);
+
     await client.query("COMMIT");
     res.status(200).json({ success: true, message: "Payment proof submitted and order completed.", data: result.rows[0] });
   } catch (error) {
@@ -628,9 +684,9 @@ const confirmRefund = async (req, res) => {
 
     // Fetch Application & Product details
     const appResult = await client.query(
-      `SELECT a.user_id, a.status, p.price, p.reward, p.category, p.country, p.platform, u.referred_by 
-       FROM applications a 
-       JOIN products p ON a.product_id = p.id 
+      `SELECT a.user_id, a.status, p.price, p.reward, p.category, p.country, p.platform, p.seller_id, u.referred_by
+       FROM applications a
+       JOIN products p ON a.product_id = p.id
        JOIN users u ON a.user_id = u.id
        WHERE a.id = $1 FOR UPDATE`,
       [applicationId]
@@ -698,6 +754,8 @@ const confirmRefund = async (req, res) => {
       `UPDATE applications SET status = 'completed', refund_screenshot_url = $1, refund_comment = $2 WHERE id = $3 RETURNING *`,
       [finalOrderText, refund_comment ? escapeHTML(refund_comment.trim()) : null, applicationId]
     );
+
+    await creditSellerReferralBonusIfEligible(client, app.seller_id);
 
    if (app.category !== 'Pre-Pay') {
         await client.query(

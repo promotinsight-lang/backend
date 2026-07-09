@@ -286,6 +286,8 @@ const updateSocialProviderMetadata = async (userId, provider, firebaseUid) => {
 
 // 🔥 NEW: Referral Code Generator Helper
 const BUYER_REGISTRATION_BONUS_USD = 10;
+const BUYER_REFERRAL_BONUS_USD = 10;
+const SELLER_REFERRAL_BONUS_USD = 15;
 
 const generateReferralCode = (name) => {
   const prefix = name ? name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X') : 'USR';
@@ -543,9 +545,10 @@ const registerUser = async (req, res) => {
 
     // 🔥 Insert into referrals table if user was referred
     if (referredById) {
+      const referralRewardAmount = userRole === 'seller' ? SELLER_REFERRAL_BONUS_USD : BUYER_REFERRAL_BONUS_USD;
       await pool.query(
-        `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', 10)`
-      , [referredById, user.id]);
+        `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', $3)`
+      , [referredById, user.id, referralRewardAmount]);
     }
 
     const token = jwt.sign(
@@ -760,9 +763,10 @@ if (existingUser.rows.length > 0) {
 
       // 🔥 Insert into referrals table if user was referred
       if (referredById) {
+        const referralRewardAmount = userRole === 'seller' ? SELLER_REFERRAL_BONUS_USD : BUYER_REFERRAL_BONUS_USD;
         await pool.query(
-          `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', 10)`
-        , [referredById, user.id]);
+          `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', $3)`
+        , [referredById, user.id, referralRewardAmount]);
       }
     }
 
