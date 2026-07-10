@@ -936,11 +936,20 @@ const submitVerification = async (req, res) => {
       telegram_account,
     } = req.body;
 
-    const isDynamic =
+    const hasDynamicPayload =
       country &&
       Array.isArray(platforms) &&
       platforms.length > 0 &&
       (globalBody || responses?.global || platform_responses || responses?.platforms);
+    const isSeller = req.user.role === 'seller';
+    const isDynamic = isSeller && hasDynamicPayload;
+
+    if (isSeller && !hasDynamicPayload) {
+      return res.status(400).json({
+        success: false,
+        message: 'Target country, platform, and store details are required for seller verification.',
+      });
+    }
 
     let amazonLoc, amazonAcc, amazonUrl, paypal, facebook, whatsapp, telegram;
     let verificationCountry = null;
