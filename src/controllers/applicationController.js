@@ -325,7 +325,7 @@ const getApplicationsByProduct = async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT a.id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
+      `SELECT a.id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
               a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at, a.ip_address, a.ip_location,
               u.name, u.email 
        FROM applications a JOIN users u ON a.user_id = u.id WHERE a.product_id = $1 ORDER BY a.created_at DESC`,
@@ -345,7 +345,7 @@ const getMyApplications = async (req, res) => {
     const userId = req.user.id;
     const result = await pool.query(
       `SELECT 
-         a.id AS application_id, a.status AS application_status, a.order_number, a.order_total_amount, a.order_paypal_address, a.screenshot_url, a.screenshot_url_2, a.order_comment,
+         a.id AS application_id, a.status AS application_status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment,
          a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at AS applied_on,
          a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
          p.id AS product_id, p.product_name, p.image_url, p.price, p.reward, p.country, p.platform, p.store_name, p.search_keyword, p.instructions, p.category
@@ -420,7 +420,7 @@ const submitOrder = async (req, res) => {
 
     const result = await client.query(
       `UPDATE applications 
-       SET order_number = $1, order_total_amount = $2, order_paypal_address = $3, screenshot_url = $4, screenshot_url_2 = $5, order_comment = $6, status = 'order_submitted' 
+       SET order_number = $1, order_total_amount = $2, order_paypal_address = $3, screenshot_url = $4, screenshot_url_2 = $5, order_comment = $6, order_submitted_at = CURRENT_TIMESTAMP, status = 'order_submitted' 
        WHERE id = $7 AND user_id = $8 AND status IN ('approved', 'pending')
        RETURNING *`,
       [
@@ -839,7 +839,7 @@ const getSellerProductReviews = async (req, res) => {
 
     const result = await pool.query(
       `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2,
-              a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at,
+              a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at, a.order_submitted_at,
               a.order_total_amount, a.order_paypal_address,
               a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
               u.name AS buyer_name, u.amazon_profile_url AS profile_link, u.trust_score,
@@ -863,7 +863,7 @@ const getSellerProductReviews = async (req, res) => {
 const getAllApplicationsAdmin = async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT a.id, a.user_id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.screenshot_url, a.screenshot_url_2, a.order_comment,
+      SELECT a.id, a.user_id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment,
              a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.created_at, a.ip_address, a.ip_location,
              a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
              p.product_name, p.image_url, p.price, p.reward,

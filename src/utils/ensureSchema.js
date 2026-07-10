@@ -20,10 +20,18 @@ const ensureSchema = async () => {
     ALTER TABLE applications
       ADD COLUMN IF NOT EXISTS order_total_amount NUMERIC(12, 2),
       ADD COLUMN IF NOT EXISTS order_paypal_address TEXT,
+      ADD COLUMN IF NOT EXISTS order_submitted_at TIMESTAMP,
       ADD COLUMN IF NOT EXISTS seller_payment_transaction_id TEXT,
       ADD COLUMN IF NOT EXISTS seller_payment_screenshot_url TEXT,
       ADD COLUMN IF NOT EXISTS seller_payment_note TEXT,
       ADD COLUMN IF NOT EXISTS seller_paid_at TIMESTAMP
+  `);
+
+  await pool.query(`
+    UPDATE applications
+    SET order_submitted_at = COALESCE(updated_at, created_at)
+    WHERE order_submitted_at IS NULL
+      AND order_number IS NOT NULL
   `);
 
   await pool.query(`
