@@ -1055,10 +1055,6 @@ const submitVerification = async (req, res) => {
       }
     }
 
-    if (facebook && !isValidURL(facebook)) {
-      return res.status(400).json({ success: false, message: 'Facebook account must be a valid URL link.' });
-    }
-
     const profileUrlForDup = amazonUrl || '';
     const duplicateCheck = await pool.query(
       `SELECT id FROM users
