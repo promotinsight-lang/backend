@@ -961,18 +961,21 @@ const submitVerification = async (req, res) => {
 
       for (const field of globalFields) {
         const val = globalData[field.key];
+        const fieldLabel = field.key === 'paypal_account'
+          ? 'Email Address'
+          : field.key === 'facebook_account' ? 'WeChat ID' : field.label;
         const isOptionalContactField = field.key === 'whatsapp_account';
         if (field.required && !isOptionalContactField && (!val || !String(val).trim())) {
           return res.status(400).json({
             success: false,
-            message: `${field.label} is required.`,
+            message: `${fieldLabel} is required.`,
           });
         }
         if (val && field.type === 'email' && !isValidEmail(String(val).trim())) {
-          return res.status(400).json({ success: false, message: `${field.label} must be a valid email.` });
+          return res.status(400).json({ success: false, message: `${fieldLabel} must be a valid email.` });
         }
-        if (val && field.type === 'url' && !isValidURL(String(val).trim())) {
-          return res.status(400).json({ success: false, message: `${field.label} must be a valid URL.` });
+        if (val && field.type === 'url' && field.key !== 'facebook_account' && !isValidURL(String(val).trim())) {
+          return res.status(400).json({ success: false, message: `${fieldLabel} must be a valid URL.` });
         }
       }
 
@@ -1025,7 +1028,7 @@ const submitVerification = async (req, res) => {
       if (!paypal) {
         return res.status(400).json({
           success: false,
-          message: 'PayPal email is required.',
+          message: 'Email address is required.',
         });
       }
       if (amazonUrl && !isValidURL(amazonUrl)) {

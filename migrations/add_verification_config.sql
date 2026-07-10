@@ -13,9 +13,9 @@ INSERT INTO verification_global_config (id, fields)
 VALUES (
   1,
   '[
-    {"key":"paypal_account","label":"PayPal Email Address","type":"email","required":true,"placeholder":"PayPal Email Address"},
+    {"key":"paypal_account","label":"Email Address","type":"email","required":true,"placeholder":"Email Address"},
     {"key":"whatsapp_account","label":"WhatsApp Number","type":"text","required":true,"placeholder":"WhatsApp Number (with country code)"},
-    {"key":"facebook_account","label":"Facebook Profile URL","type":"url","required":false,"placeholder":"Facebook Profile URL"},
+    {"key":"facebook_account","label":"WeChat ID","type":"text","required":false,"placeholder":"Enter your WeChat ID"},
     {"key":"telegram_account","label":"Telegram Username","type":"text","required":false,"placeholder":"Telegram Username (@username)"}
   ]'::jsonb
 )

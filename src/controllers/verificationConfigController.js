@@ -7,9 +7,9 @@ const DEFAULT_PLATFORM_FIELDS = [
 ];
 
 const DEFAULT_GLOBAL_FIELDS = [
-  { key: 'paypal_account', label: 'PayPal Email Address', type: 'email', required: true, placeholder: 'yourname@email.com' },
+  { key: 'paypal_account', label: 'Email Address', type: 'email', required: true, placeholder: 'yourname@email.com' },
   { key: 'whatsapp_account', label: 'WhatsApp Number', type: 'tel', required: false, placeholder: '+1 555 123 4567' },
-  { key: 'facebook_account', label: 'Facebook Profile URL', type: 'url', required: false, placeholder: 'https://facebook.com/your.profile' },
+  { key: 'facebook_account', label: 'WeChat ID', type: 'text', required: false, placeholder: 'Enter your WeChat ID' },
   { key: 'telegram_account', label: 'Telegram Username', type: 'text', required: false, placeholder: '@yourusername' },
 ];
 
@@ -50,6 +50,16 @@ const sanitizeFields = (fields) =>
     placeholder: f.placeholder ? String(f.placeholder) : '',
   }));
 
+const normalizeGlobalFields = (fields) => fields.map((field) => {
+  if (field.key === 'paypal_account') {
+    return { ...field, label: 'Email Address', type: 'email', placeholder: 'yourname@email.com' };
+  }
+  if (field.key === 'facebook_account') {
+    return { ...field, label: 'WeChat ID', type: 'text', placeholder: 'Enter your WeChat ID' };
+  }
+  return field;
+});
+
 const ensureGlobalConfigTable = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS verification_global_config (
@@ -88,7 +98,7 @@ const getConfigRow = async () => {
 
 const getGlobalFields = async () => {
   const { fields } = await getConfigRow();
-  return fields;
+  return normalizeGlobalFields(fields);
 };
 
 const getPlatformFieldsMap = async () => {
