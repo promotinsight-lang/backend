@@ -12,6 +12,7 @@ const jwt = require("jsonwebtoken");
 const fs = require("fs");
 const path = require("path");
 const pool = require("./config/db");
+const { assertDatabaseConfiguration } = pool;
 const ensureSchema = require("./utils/ensureSchema");
 require("dotenv").config();
 const privateChatRoutes = require('./routes/privateChatRoutes');
@@ -209,8 +210,21 @@ startCronJobs();
 // ==========================================
 const PORT = process.env.PORT || 5000;
 
+const assertAuthenticationConfiguration = () => {
+  if (!String(process.env.JWT_SECRET || "").trim()) {
+    throw new Error("JWT_SECRET is required.");
+  }
+
+  if (process.env.NODE_ENV === "production" &&
+      !String(process.env.JWT_RESET_SECRET || process.env.PASSWORD_RESET_SECRET || "").trim()) {
+    throw new Error("JWT_RESET_SECRET or PASSWORD_RESET_SECRET is required in production.");
+  }
+};
+
 const startServer = async () => {
   try {
+    assertDatabaseConfiguration();
+    assertAuthenticationConfiguration();
     await ensureSchema();
     console.log("Database schema is ready");
 

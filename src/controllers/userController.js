@@ -3,7 +3,8 @@ const { addAutomaticRank } = require("../utils/userRank");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Resend } = require("resend");
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
+const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const crypto = require("crypto");
 const svgCaptcha = require("svg-captcha"); 
 const axios = require("axios"); // 🔥 NEW: Axios for API calls
@@ -16,6 +17,20 @@ const { getBuyerWalletBreakdown } = require("../utils/buyerWalletBreakdown");
 
 const captchaCache = new Map(); 
 const otpCache = new Map();     
+
+if (!resend) {
+  console.warn("RESEND_API_KEY is not configured; email-dependent endpoints will return 503.");
+}
+
+const requireEmailService = (res) => {
+  if (resend) return true;
+
+  res.status(503).json({
+    success: false,
+    message: "Email service is not configured. Please try again later."
+  });
+  return false;
+};
 
 setInterval(() => {
   const now = Date.now();
@@ -424,6 +439,8 @@ const generateCaptcha = (req, res) => {
 // ==========================================
 const sendRegistrationOtp = async (req, res) => {
   try {
+    if (!requireEmailService(res)) return;
+
     const { email } = req.body;
     
     if (!email || !isValidEmail(email)) {
@@ -1401,6 +1418,8 @@ const resolveAppeal = async (req, res) => {
 
 const forgotPassword = async (req, res) => {
   try {
+    if (!requireEmailService(res)) return;
+
     const { email } = req.body;
     
     if (!email || !isValidEmail(email)) {
@@ -1498,6 +1517,8 @@ const sendContactEmail = async (req, res) => {
     if (!isValidEmail(safeEmail)) {
       return res.status(400).json({ success: false, message: "Please provide a valid email address." });
     }
+
+    if (!requireEmailService(res)) return;
 
     const { data, error } = await resend.emails.send({
       from: 'PromotInsight Support <support@promotinsight.com>',
