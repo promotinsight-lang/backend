@@ -942,7 +942,8 @@ const submitVerification = async (req, res) => {
       platforms.length > 0 &&
       (globalBody || responses?.global || platform_responses || responses?.platforms);
     const isSeller = req.user.role === 'seller';
-    const isDynamic = isSeller && hasDynamicPayload;
+    const isBuyer = req.user.role === 'buyer';
+    const isDynamic = hasDynamicPayload;
 
     if (isSeller && !hasDynamicPayload) {
       return res.status(400).json({
@@ -971,8 +972,8 @@ const submitVerification = async (req, res) => {
       for (const field of globalFields) {
         const val = globalData[field.key];
         const fieldLabel = field.key === 'paypal_account'
-          ? 'Email Address'
-          : field.key === 'facebook_account' ? 'WeChat ID' : field.label;
+          ? (isBuyer ? 'PayPal Email Address' : 'Email Address')
+          : field.key === 'facebook_account' ? (isBuyer ? 'Facebook ID' : 'WeChat ID') : field.label;
         const isOptionalContactField = field.key === 'whatsapp_account';
         if (field.required && !isOptionalContactField && (!val || !String(val).trim())) {
           return res.status(400).json({
@@ -996,17 +997,20 @@ const submitVerification = async (req, res) => {
         const platformValues = platData[platformName] || {};
         for (const field of platFields) {
           const val = platformValues[field.key];
+          const fieldLabel = field.key === 'account_name'
+            ? (isBuyer ? 'Profile Name' : 'Store Name')
+            : field.label;
           const isOptionalPlatformField = ['profile_url', 'amazon_profile_url', 'verification_image_url', 'image_url'].includes(field.key);
           if (field.required && !isOptionalPlatformField && (!val || !String(val).trim())) {
             return res.status(400).json({
               success: false,
-              message: `${platformName}: ${field.label} is required.`,
+              message: `${platformName}: ${fieldLabel} is required.`,
             });
           }
           if (val && field.type === 'url' && !isValidURL(String(val).trim())) {
             return res.status(400).json({
               success: false,
-              message: `${platformName}: ${field.label} must be a valid URL.`,
+              message: `${platformName}: ${fieldLabel} must be a valid URL.`,
             });
           }
         }
@@ -1037,7 +1041,7 @@ const submitVerification = async (req, res) => {
       if (!paypal) {
         return res.status(400).json({
           success: false,
-          message: 'Email address is required.',
+          message: isBuyer ? 'PayPal Email Address is required.' : 'Email address is required.',
         });
       }
       if (amazonUrl && !isValidURL(amazonUrl)) {
