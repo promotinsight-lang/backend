@@ -1,7 +1,7 @@
 const pool = require('../config/db');
 
 const DEFAULT_PLATFORM_FIELDS = [
-  { key: 'account_name', label: 'Account Details', type: 'text', required: true, placeholder: 'Account details on this platform' },
+  { key: 'account_name', label: 'Store Name', type: 'text', required: true, placeholder: 'Store name on this platform' },
   { key: 'profile_url', label: 'Profile URL', type: 'url', required: false, placeholder: 'https://www.amazon.com/gp/profile/...' },
   { key: 'verification_image_url', label: 'Profile Screenshot', type: 'image', required: false, placeholder: '' },
 ];
@@ -60,6 +60,12 @@ const normalizeGlobalFields = (fields) => fields.map((field) => {
   return field;
 });
 
+const normalizePlatformFields = (fields) => fields.map((field) => (
+  field.key === 'account_name'
+    ? { ...field, label: 'Store Name', placeholder: 'Store name on this platform' }
+    : field
+));
+
 const ensureGlobalConfigTable = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS verification_global_config (
@@ -110,7 +116,7 @@ const getPlatformFieldsFor = async (country, platform) => {
   const map = await getPlatformFieldsMap();
   const key = platformKey(country, platform);
   const stored = parseJsonArray(map[key], []);
-  if (stored.length > 0) return stored;
+  if (stored.length > 0) return normalizePlatformFields(stored);
   return DEFAULT_PLATFORM_FIELDS;
 };
 
@@ -151,6 +157,7 @@ const getVerificationFormConfig = async (req, res) => {
           label: `${row.platform} — ${f.label}`,
         }));
       }
+      platformFields = normalizePlatformFields(platformFields);
 
       countryMap[country].platforms.push({
         platform: row.platform,
