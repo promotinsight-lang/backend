@@ -21,6 +21,7 @@ const ensureSchema = async () => {
       ADD COLUMN IF NOT EXISTS order_total_amount NUMERIC(12, 2),
       ADD COLUMN IF NOT EXISTS order_paypal_address TEXT,
       ADD COLUMN IF NOT EXISTS order_submitted_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS review_submitted_at TIMESTAMP,
       ADD COLUMN IF NOT EXISTS seller_payment_transaction_id TEXT,
       ADD COLUMN IF NOT EXISTS seller_payment_screenshot_url TEXT,
       ADD COLUMN IF NOT EXISTS seller_payment_note TEXT,
@@ -32,6 +33,17 @@ const ensureSchema = async () => {
     SET order_submitted_at = COALESCE(updated_at, created_at)
     WHERE order_submitted_at IS NULL
       AND order_number IS NOT NULL
+  `);
+
+  await pool.query(`
+    UPDATE applications
+    SET review_submitted_at = COALESCE(updated_at, created_at)
+    WHERE review_submitted_at IS NULL
+      AND (
+        review_link IS NOT NULL
+        OR review_screenshot_url IS NOT NULL
+        OR review_screenshot_url_2 IS NOT NULL
+      )
   `);
 
   await pool.query(`

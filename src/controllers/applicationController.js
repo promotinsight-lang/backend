@@ -326,6 +326,7 @@ const getApplicationsByProduct = async (req, res) => {
 
     const result = await pool.query(
       `SELECT a.id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
+              a.review_submitted_at,
               a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at, a.ip_address, a.ip_location,
               u.name, u.email 
        FROM applications a JOIN users u ON a.user_id = u.id WHERE a.product_id = $1 ORDER BY a.created_at DESC`,
@@ -346,6 +347,7 @@ const getMyApplications = async (req, res) => {
     const result = await pool.query(
       `SELECT 
          a.id AS application_id, a.status AS application_status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment,
+         a.review_submitted_at,
          a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at AS applied_on,
          a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
          p.id AS product_id, p.product_name, p.image_url, p.price, p.reward, p.country, p.platform, p.store_name, p.search_keyword, p.instructions, p.category
@@ -505,7 +507,7 @@ const submitReview = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE applications 
-       SET review_screenshot_url = $1, review_screenshot_url_2 = $2, review_link = $3, status = 'review_submitted' 
+       SET review_screenshot_url = $1, review_screenshot_url_2 = $2, review_link = $3, review_submitted_at = CURRENT_TIMESTAMP, status = 'review_submitted' 
        WHERE id = $4 AND user_id = $5 AND status = 'order_approved'
        RETURNING *`,
       [
