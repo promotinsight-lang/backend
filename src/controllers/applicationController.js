@@ -622,7 +622,9 @@ const submitSellerPaymentProof = async (req, res) => {
     await client.query("BEGIN");
 
     const appQuery = await client.query(
-      `SELECT a.id, a.status, a.user_id, p.seller_id, p.reward
+      `SELECT a.id, a.status, a.user_id, a.screenshot_url, a.screenshot_url_2,
+              a.review_link, a.review_screenshot_url, a.review_screenshot_url_2,
+              p.seller_id, p.reward, p.category
        FROM applications a
        JOIN products p ON a.product_id = p.id
        WHERE a.id = $1
@@ -635,13 +637,27 @@ const submitSellerPaymentProof = async (req, res) => {
       return res.status(403).json({ success: false, message: "Unauthorized action." });
     }
 
-    const validStates = ['order_submitted', 'order_approved', 'review_submitted', 'forwarded_to_seller', 'pending_refund'];
-    if (!validStates.includes(appQuery.rows[0].status)) {
+    const app = appQuery.rows[0];
+    const normalizedCategory = String(app.category || '').trim().toLowerCase();
+    const reviewRequired = normalizedCategory === 'review' || normalizedCategory === 'need review';
+    const hasReviewProof = Boolean(app.review_link || app.review_screenshot_url || app.review_screenshot_url_2);
+    const hasReceivedProductProof = Boolean(app.screenshot_url || app.screenshot_url_2);
+    const validReviewStates = ['review_submitted', 'forwarded_to_seller', 'pending_refund'];
+    const validNoReviewStates = ['order_submitted', 'order_approved', 'review_submitted', 'forwarded_to_seller', 'pending_refund'];
+    const paymentReady = reviewRequired
+      ? hasReviewProof && validReviewStates.includes(app.status)
+      : hasReceivedProductProof && validNoReviewStates.includes(app.status);
+
+    if (!paymentReady) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ success: false, message: "This order is not ready for seller payment." });
+      return res.status(400).json({
+        success: false,
+        message: reviewRequired
+          ? "Buyer must submit the review before seller payment."
+          : "Buyer must submit the received-product screenshot before seller payment."
+      });
     }
 
-    const app = appQuery.rows[0];
     await creditBuyerRewardOnce(client, {
       userId: app.user_id,
       reward: app.reward,
