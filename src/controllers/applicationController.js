@@ -857,7 +857,7 @@ const getSellerProductReviews = async (req, res) => {
 
     const result = await pool.query(
       `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2,
-              a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_comment, a.created_at, a.order_submitted_at,
+              a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.review_submitted_at, a.refund_comment, a.created_at, a.order_submitted_at,
               a.order_total_amount, a.order_paypal_address,
               a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
               u.name AS buyer_name, u.amazon_profile_url AS profile_link, u.trust_score,
@@ -882,7 +882,7 @@ const getAllApplicationsAdmin = async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT a.id, a.user_id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment,
-             a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.created_at, a.ip_address, a.ip_location,
+             a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.review_submitted_at, a.created_at, a.ip_address, a.ip_location,
              a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
              p.product_name, p.image_url, p.price, p.reward,
              p.platform, p.country, p.store_name, p.search_keyword, p.instructions, p.product_link, p.seller_id, p.category,
