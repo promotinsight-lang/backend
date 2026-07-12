@@ -54,6 +54,7 @@ const upsertFeeConfig = async (req, res) => {
             platform, 
             platform_charge, 
             platform_charge_conditions = {},
+            buyer_reward_conditions = {},
             buyer_reward = 0, 
             buyer_refund_fee = 0, 
             seller_deposit_fee = 0, 
@@ -88,6 +89,19 @@ const upsertFeeConfig = async (req, res) => {
         }
         processedPlatformChargeConditions = JSON.stringify(processedPlatformChargeConditions);
 
+        let processedBuyerRewardConditions = buyer_reward_conditions;
+        if (typeof buyer_reward_conditions === 'string') {
+            try {
+                processedBuyerRewardConditions = JSON.parse(buyer_reward_conditions);
+            } catch {
+                processedBuyerRewardConditions = {};
+            }
+        }
+        if (!processedBuyerRewardConditions || typeof processedBuyerRewardConditions !== 'object' || Array.isArray(processedBuyerRewardConditions)) {
+            processedBuyerRewardConditions = {};
+        }
+        processedBuyerRewardConditions = JSON.stringify(processedBuyerRewardConditions);
+
         let processedVerificationFields = verification_fields;
         if (typeof verification_fields === 'object' && !Array.isArray(verification_fields)) {
             processedVerificationFields = [];
@@ -105,9 +119,10 @@ const upsertFeeConfig = async (req, res) => {
                 country, platform, platform_charge, buyer_reward, 
                 buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee, exchange_rate,
                 platform_charge_conditions,
+                buyer_reward_conditions,
                 verification_fields
             ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb)
             ON CONFLICT (country, platform) 
             DO UPDATE SET 
                 platform_charge = EXCLUDED.platform_charge,
@@ -117,6 +132,7 @@ const upsertFeeConfig = async (req, res) => {
                 seller_withdrawal_fee = EXCLUDED.seller_withdrawal_fee,
                 exchange_rate = EXCLUDED.exchange_rate,
                 platform_charge_conditions = EXCLUDED.platform_charge_conditions,
+                buyer_reward_conditions = EXCLUDED.buyer_reward_conditions,
                 verification_fields = EXCLUDED.verification_fields,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *;
@@ -132,6 +148,7 @@ const upsertFeeConfig = async (req, res) => {
             seller_withdrawal_fee,
             exchange_rate,
             processedPlatformChargeConditions,
+            processedBuyerRewardConditions,
             processedVerificationFields
         ];
 

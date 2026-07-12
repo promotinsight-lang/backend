@@ -3,6 +3,7 @@ const pool = require("../config/db");
 const {
   normalizeCampaignCategory,
   normalizeCampaignCategoryKey,
+  resolveBuyerRewardForCategory,
   parsePlatformChargeConditions,
   parsePlatformChargeTiers,
 } = require("../utils/campaignCategories");
@@ -80,7 +81,7 @@ const serializeProductForUser = (product, user) => {
 const fetchFeeConfig = async (client, country, platform) => {
   // 🔥 FETCH EXCHANGE RATE ALONG WITH FEES
   const result = await client.query(
-    `SELECT country, platform, platform_charge, platform_charge_conditions, buyer_reward, buyer_refund_fee, exchange_rate
+    `SELECT country, platform, platform_charge, platform_charge_conditions, buyer_reward, buyer_reward_conditions, buyer_refund_fee, exchange_rate
      FROM dynamic_fees_config
      WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)`,
     [country.trim(), platform.trim()]
@@ -90,8 +91,9 @@ const fetchFeeConfig = async (client, country, platform) => {
 };
 
 const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, category, useConfiguredBuyerReward = false }) => {
-  const fixedBuyerReward = parseAmount(feeConfig.buyer_reward);
-  const resolvedReward = useConfiguredBuyerReward && fixedBuyerReward > 0 ? fixedBuyerReward : reward;
+  const resolvedReward = useConfiguredBuyerReward
+    ? resolveBuyerRewardForCategory(feeConfig, category, reward)
+    : reward;
   
   let commissionPerOrderLocal = 0;
   let hasFeeError = false;
@@ -116,7 +118,12 @@ const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, category
       }
   } else {
       const platformChargePercent = parseAmount(feeConfig.platform_charge) / 100;
-      commissionPerOrderLocal = price * (Number.isNaN(platformChargePercent) ? 0.10 : platformChargePercent);
+      if (Number.isNaN(platformChargePercent)) {
+        hasFeeError = true;
+        feeErrorMessage = `No platform charge tier configured for ${normalizedCategory} on this platform.`;
+      } else {
+        commissionPerOrderLocal = price * platformChargePercent;
+      }
   }
 
   const rewardDepositPerOrderLocal = resolvedReward;

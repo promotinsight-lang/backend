@@ -53,7 +53,8 @@ const ensureSchema = async () => {
 
   await pool.query(`
     ALTER TABLE dynamic_fees_config
-      ADD COLUMN IF NOT EXISTS platform_charge_conditions JSONB NOT NULL DEFAULT '{}'::jsonb
+      ADD COLUMN IF NOT EXISTS platform_charge_conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS buyer_reward_conditions JSONB NOT NULL DEFAULT '{}'::jsonb
   `);
 
   await pool.query(`

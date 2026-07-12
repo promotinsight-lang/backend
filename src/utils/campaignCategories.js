@@ -82,6 +82,42 @@ const parsePlatformChargeConditions = (value) => {
   return defaults;
 };
 
+const parseBuyerRewardConditions = (value) => {
+  const parsed = parseMaybeJson(value, {});
+  const defaults = PLATFORM_CHARGE_CONDITION_KEYS.reduce((acc, key) => {
+    acc[key] = '';
+    return acc;
+  }, {});
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return defaults;
+  }
+
+  for (const key of PLATFORM_CHARGE_CONDITION_KEYS) {
+    const reward = Number(parsed[key]);
+    defaults[key] = Number.isFinite(reward) && reward >= 0 ? reward : '';
+  }
+
+  return defaults;
+};
+
+const resolveBuyerRewardForCategory = (feeConfig, category, fallbackReward) => {
+  const categoryKey = normalizeCampaignCategoryKey(category);
+  const conditionMap = parseBuyerRewardConditions(feeConfig?.buyer_reward_conditions);
+  const conditionReward = categoryKey !== null ? Number(conditionMap[categoryKey]) : NaN;
+
+  if (Number.isFinite(conditionReward) && conditionReward >= 0) {
+    return conditionReward;
+  }
+
+  const fixedBuyerReward = Number(feeConfig?.buyer_reward);
+  if (Number.isFinite(fixedBuyerReward) && fixedBuyerReward > 0) {
+    return fixedBuyerReward;
+  }
+
+  return fallbackReward;
+};
+
 const resolvePlatformChargeTiersForCategory = (feeConfig, category) => {
   const categoryKey = normalizeCampaignCategoryKey(category);
   const conditionMap = parsePlatformChargeConditions(feeConfig?.platform_charge_conditions);
@@ -103,5 +139,7 @@ module.exports = {
   normalizeCampaignCategoryKey,
   parsePlatformChargeConditions,
   parsePlatformChargeTiers,
+  parseBuyerRewardConditions,
+  resolveBuyerRewardForCategory,
   resolvePlatformChargeTiersForCategory,
 };
