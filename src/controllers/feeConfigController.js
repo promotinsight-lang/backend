@@ -1,4 +1,50 @@
+const axios = require('axios');
 const pool = require('../config/db');
+
+const normalizeCurrencyCode = (currency) => String(currency || '').trim().toUpperCase();
+
+const getLiveExchangeRate = async (req, res) => {
+    try {
+        const currency = normalizeCurrencyCode(req.query.currency);
+
+        if (!/^[A-Z]{3}$/.test(currency)) {
+            return res.status(400).json({ success: false, message: 'Valid 3-letter currency code is required.' });
+        }
+
+        if (currency === 'USD') {
+            return res.status(200).json({
+                success: true,
+                base: 'USD',
+                currency,
+                rate: 1,
+                source: 'USD',
+            });
+        }
+
+        const symbol = `USD${currency}=X`;
+        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1m`;
+        const { data } = await axios.get(yahooUrl, { timeout: 8000 });
+        const meta = data?.chart?.result?.[0]?.meta;
+        const rate = Number(meta?.regularMarketPrice || meta?.previousClose);
+
+        if (!rate || Number.isNaN(rate)) {
+            return res.status(502).json({ success: false, message: `Live exchange rate unavailable for ${currency}.` });
+        }
+
+        return res.status(200).json({
+            success: true,
+            base: 'USD',
+            currency,
+            rate,
+            source: 'Yahoo Finance live market quote',
+            symbol,
+            marketTime: meta?.regularMarketTime || null,
+        });
+    } catch (error) {
+        console.error('LIVE EXCHANGE RATE ERROR:', error.message);
+        return res.status(502).json({ success: false, message: 'Live exchange rate service is unavailable.' });
+    }
+};
 
 // অ্যাডমিন প্যানেল থেকে ডায়নামিক ফি কনফিগারেশন সেভ বা আপডেট (UPSERT) করার ফাংশন
 const upsertFeeConfig = async (req, res) => {
@@ -172,4 +218,4 @@ const deleteFeeConfig = async (req, res) => {
     }
 };
 
-module.exports = { upsertFeeConfig, getFeeConfig, getAllFeeConfigs, deleteFeeConfig };
+module.exports = { upsertFeeConfig, getFeeConfig, getAllFeeConfigs, deleteFeeConfig, getLiveExchangeRate };

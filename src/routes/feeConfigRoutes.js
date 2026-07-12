@@ -2,7 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 
-const { upsertFeeConfig, getFeeConfig, getAllFeeConfigs, deleteFeeConfig } = require('../controllers/feeConfigController');
+const { upsertFeeConfig, getFeeConfig, getAllFeeConfigs, deleteFeeConfig, getLiveExchangeRate } = require('../controllers/feeConfigController');
 const { protect } = require('../middleware/authMiddleware');
 const authorize = require('../middleware/roleMiddleware');
 
@@ -18,6 +18,7 @@ const adminFeeConfigLimiter = rateLimit({
 // 🌍 Public Routes (যে কেউ, এমনকি লগিন ছাড়াও ডাটা দেখতে পারবে)
 // ==========================================
 // Public lookup for seller calculator and product listing previews.
+router.get('/exchange-rate', protect, authorize('admin'), getLiveExchangeRate);
 router.get('/', getFeeConfig);
 // 🔥 FIXED: Removed protect & authorize('admin') to allow public dropdowns in HomePage
 router.get('/all', getAllFeeConfigs); 
