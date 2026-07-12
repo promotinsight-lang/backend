@@ -37,6 +37,7 @@ const io = new Server(server, {
     credentials: true 
   }
 });
+app.set('io', io);
 
 // ==========================================
 // 🛡️ ENTERPRISE-GRADE SECURITY MIDDLEWARES
@@ -105,6 +106,7 @@ const privateChatSocket = require('./socket/privateChatSocket');
 
 io.on('connection', (socket) => {
   console.log('🟢 New user connected via Socket:', socket.id);
+  socket.join(`user_${socket.user.id}`);
 
   privateChatSocket(io, socket); 
 

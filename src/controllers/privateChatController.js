@@ -115,6 +115,16 @@ const approveChatRequest = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    const io = req.app.get('io') || global.io;
+    if (io) {
+      io.to(`user_${userId}`).emit('private_chat_approved', {
+        userId,
+        requestId: id,
+        session: sessionResult.rows[0],
+      });
+    }
+
     res.status(200).json({ success: true, message: 'Chat approved and session started', session: sessionResult.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -175,6 +185,15 @@ const adminStartChatWithUser = async (req, res) => {
       `INSERT INTO private_chat_sessions (user_id, admin_user_id, status) VALUES ($1, $2, 'active') RETURNING *`,
       [userId, adminId]
     );
+
+    const io = req.app.get('io') || global.io;
+    if (io) {
+      io.to(`user_${userId}`).emit('private_chat_approved', {
+        userId,
+        session: sessionResult.rows[0],
+        startedDirectly: true,
+      });
+    }
 
     res.status(201).json({ success: true, message: 'Chat session started directly', session: sessionResult.rows[0] });
   } catch (error) {
