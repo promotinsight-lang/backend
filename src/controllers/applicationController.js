@@ -1,5 +1,9 @@
 const pool = require("../config/db");
 const axios = require("axios");
+const {
+  isReviewRequiredCampaignCategory,
+  normalizeCampaignCategoryKey,
+} = require("../utils/campaignCategories");
 
 // 🛡️ XSS Protection Utility
 const escapeHTML = (str) => {
@@ -584,7 +588,7 @@ const sellerApproveReview = async (req, res) => {
       return res.status(400).json({ success: false, message: "Application is not in a valid state to be approved." });
     }
 
-    if (app.category !== 'Pre-Pay') {
+    if (normalizeCampaignCategoryKey(app.category) !== 'pre_pay') {
       await client.query(`UPDATE applications SET status = 'pending_refund' WHERE id = $1`, [applicationId]);
       await client.query("COMMIT");
       return res.json({ success: true, message: "Verified by Seller. Sent to Admin for final refund processing." });
@@ -640,8 +644,7 @@ const submitSellerPaymentProof = async (req, res) => {
     }
 
     const app = appQuery.rows[0];
-    const normalizedCategory = String(app.category || '').trim().toLowerCase();
-    const reviewRequired = normalizedCategory === 'review' || normalizedCategory === 'need review';
+    const reviewRequired = isReviewRequiredCampaignCategory(app.category);
     const hasReviewProof = Boolean(app.review_link || app.review_screenshot_url || app.review_screenshot_url_2);
     const hasReceivedProductProof = Boolean(app.screenshot_url || app.screenshot_url_2);
     const validReviewStates = ['review_submitted', 'forwarded_to_seller', 'pending_refund'];
@@ -726,12 +729,12 @@ const confirmRefund = async (req, res) => {
        return res.status(400).json({ message: "Refund already processed for this application." });
     }
 
-    const allowedRefundStatuses = app.category === 'Pre-Pay' ? ['pending', 'pending_refund'] : ['pending_refund'];
+    const allowedRefundStatuses = normalizeCampaignCategoryKey(app.category) === 'pre_pay' ? ['pending', 'pending_refund'] : ['pending_refund'];
     if (!allowedRefundStatuses.includes(app.status)) {
        await client.query('ROLLBACK');
        return res.status(400).json({
          success: false,
-         message: app.category === 'Pre-Pay'
+         message: normalizeCampaignCategoryKey(app.category) === 'pre_pay'
            ? "Pre-Pay payment can only be confirmed from pending or pending_refund status."
            : "Refund can only be confirmed after the application reaches pending_refund status."
        });
@@ -748,7 +751,7 @@ const confirmRefund = async (req, res) => {
     let localRefundAmount = "0.00"; 
     let localCurrencyCode = app.country || "Local";
 
- if (app.category !== 'Pre-Pay') {
+ if (normalizeCampaignCategoryKey(app.category) !== 'pre_pay') {
       const feeResult = await client.query(
         "SELECT exchange_rate FROM dynamic_fees_config WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)",
         [app.country, app.platform]
@@ -779,7 +782,7 @@ const confirmRefund = async (req, res) => {
 
     await creditSellerReferralBonusIfEligible(client, app.seller_id);
 
-   if (app.category !== 'Pre-Pay') {
+   if (normalizeCampaignCategoryKey(app.category) !== 'pre_pay') {
         await client.query(
             "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
             [app.user_id, finalRefundAmount, `Refund received for Application #${applicationId}. Added: $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}).`]

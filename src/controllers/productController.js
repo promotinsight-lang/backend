@@ -1,5 +1,11 @@
 const net = require("net");
 const pool = require("../config/db");
+const {
+  normalizeCampaignCategory,
+  normalizeCampaignCategoryKey,
+  parsePlatformChargeConditions,
+  parsePlatformChargeTiers,
+} = require("../utils/campaignCategories");
 
 const parseAmount = (value) => {
   const amount = Number(value);
@@ -74,7 +80,7 @@ const serializeProductForUser = (product, user) => {
 const fetchFeeConfig = async (client, country, platform) => {
   // 🔥 FETCH EXCHANGE RATE ALONG WITH FEES
   const result = await client.query(
-    `SELECT country, platform, platform_charge, buyer_reward, buyer_refund_fee, exchange_rate
+    `SELECT country, platform, platform_charge, platform_charge_conditions, buyer_reward, buyer_refund_fee, exchange_rate
      FROM dynamic_fees_config
      WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)`,
     [country.trim(), platform.trim()]
@@ -83,23 +89,22 @@ const fetchFeeConfig = async (client, country, platform) => {
   return result.rows[0] || null;
 };
 
-const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, useConfiguredBuyerReward = false }) => {
+const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, category, useConfiguredBuyerReward = false }) => {
   const fixedBuyerReward = parseAmount(feeConfig.buyer_reward);
   const resolvedReward = useConfiguredBuyerReward && fixedBuyerReward > 0 ? fixedBuyerReward : reward;
   
   let commissionPerOrderLocal = 0;
   let hasFeeError = false;
   let feeErrorMessage = "";
+  const normalizedCategory = normalizeCampaignCategory(category);
+  const categoryKey = normalizeCampaignCategoryKey(normalizedCategory);
 
   // 🔥 JSON TIER PARSING LOGIC
-  let platformChargeTiers = feeConfig.platform_charge;
-  if (typeof platformChargeTiers === 'string') {
-      try { 
-          platformChargeTiers = JSON.parse(platformChargeTiers); 
-      } catch (e) { 
-          platformChargeTiers = []; 
-      }
-  }
+  const conditionMap = parsePlatformChargeConditions(feeConfig.platform_charge_conditions);
+  const selectedConditionTiers = categoryKey ? conditionMap[categoryKey] : [];
+  const platformChargeTiers = (Array.isArray(selectedConditionTiers) && selectedConditionTiers.length > 0)
+    ? selectedConditionTiers
+    : parsePlatformChargeTiers(feeConfig.platform_charge);
 
   if (Array.isArray(platformChargeTiers) && platformChargeTiers.length > 0) {
       const matchedTier = platformChargeTiers.find(t => price >= Number(t.min) && price <= Number(t.max));
@@ -107,7 +112,7 @@ const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, useConfi
           commissionPerOrderLocal = Number(matchedTier.fee);
       } else {
           hasFeeError = true;
-          feeErrorMessage = `Product price does not fall into any defined fee tier for this platform.`;
+          feeErrorMessage = `Product price does not fall into any defined fee tier for ${normalizedCategory} on this platform.`;
       }
   } else {
       const platformChargePercent = parseAmount(feeConfig.platform_charge) / 100;
@@ -132,6 +137,8 @@ const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, useConfi
     totalRequiredDepositLocal,
     totalRequiredDepositUSD,
     exchangeRate,
+    categoryKey,
+    normalizedCategory,
     hasFeeError,
     feeErrorMessage
   };
@@ -147,6 +154,7 @@ const createProduct = async (req, res) => {
     const { product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, platform, category } = req.body;
     const safeCountry = country ? country.trim() : '';
     const safePlatform = platform ? platform.trim() : '';
+    const safeCategory = normalizeCampaignCategory(category);
 
     if (!product_name || !store_name || !search_keyword || !product_link || !safeCountry || !safePlatform) {
       return res.status(400).json({ success: false, message: "Product name, store, keyword, link, country, and platform are required" });
@@ -191,6 +199,7 @@ const createProduct = async (req, res) => {
       reward: rewardVal,
       quantity: qtyVal,
       feeConfig,
+      category: safeCategory,
       useConfiguredBuyerReward: true,
     });
 
@@ -232,7 +241,7 @@ const createProduct = async (req, res) => {
         image_url.trim(), product_name.trim(), priceVal, store_name.trim(), search_keyword.trim(),
         resolvedReward, product_link.trim(), safeCountry, qtyVal, 
         instructions ? instructions.trim() : '', sellerId, safePlatform, 
-        category ? category.trim() : 'General', totalRequiredDepositUSD, commissionPerOrderLocal
+        safeCategory, totalRequiredDepositUSD, commissionPerOrderLocal
       ]
     );
 

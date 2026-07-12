@@ -52,6 +52,11 @@ const ensureSchema = async () => {
   `);
 
   await pool.query(`
+    ALTER TABLE dynamic_fees_config
+      ADD COLUMN IF NOT EXISTS platform_charge_conditions JSONB NOT NULL DEFAULT '{}'::jsonb
+  `);
+
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_reference_id
       ON transactions(reference_id)
       WHERE reference_id IS NOT NULL
