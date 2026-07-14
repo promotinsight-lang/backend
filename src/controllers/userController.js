@@ -241,17 +241,74 @@ const getRegistrationEmailBlockMessage = () => (
 // 🔥 NEW: IP Tracking Helper
 const normalizeClientIp = (ip) => {
   if (!ip) return "Unknown";
-  const normalized = String(ip).replace(/^::ffff:/, "").trim();
+  let normalized = String(ip).trim().replace(/^::ffff:/, "");
+  if (normalized.startsWith('[') && normalized.includes(']')) {
+    normalized = normalized.slice(1, normalized.indexOf(']'));
+  }
+  if (normalized.includes(',') ) {
+    normalized = normalized.split(',')[0].trim();
+  }
+  if (net.isIP(normalized) === 4 && normalized.includes(':')) {
+    normalized = normalized.split(':')[0];
+  }
+  normalized = normalized.replace(/^"|"$/g, '').trim();
   return normalized || "Unknown";
 };
 
+const isPrivateIp = (ip) => {
+  const version = net.isIP(ip);
+  if (!version) return false;
+
+  if (version === 4) {
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return false;
+    return parts[0] === 10
+      || parts[0] === 127
+      || (parts[0] === 169 && parts[1] === 254)
+      || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+      || (parts[0] === 192 && parts[1] === 168)
+      || parts[0] === 0;
+  }
+
+  const normalized = ip.toLowerCase();
+  return normalized === "::1"
+    || normalized.startsWith("fc")
+    || normalized.startsWith("fd")
+    || normalized.startsWith("fe80:");
+};
+
+const isPublicIp = (ip) => {
+  const normalized = normalizeClientIp(ip);
+  return normalized !== "Unknown" && !isPrivateIp(normalized);
+};
+
 const getClientIp = (req) => {
-  return normalizeClientIp(req.ip || req.socket?.remoteAddress);
+  const headerCandidates = [
+    req.headers?.["cf-connecting-ip"],
+    req.headers?.["true-client-ip"],
+    req.headers?.["x-real-ip"],
+    req.headers?.["x-forwarded-for"],
+    req.ips?.[0],
+    req.ip,
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress,
+  ];
+
+  for (const candidate of headerCandidates) {
+    if (!candidate) continue;
+    const values = String(candidate).split(",");
+    for (const value of values) {
+      const normalized = normalizeClientIp(value);
+      if (isPublicIp(normalized)) return normalized;
+    }
+  }
+
+  return "Unknown";
 };
 
 // 🔥 PREMIUM: Automated IP to Location Resolver
 const getIpLocation = async (ip) => {
-  if (!ip || ip === 'Unknown' || ip === '::1' || ip === '127.0.0.1') return 'Localhost';
+  if (!ip || ip === 'Unknown' || !isPublicIp(ip)) return 'Unknown Location';
   try {
     const response = await axios.get(`http://ip-api.com/json/${ip}`);
     if (response.data && response.data.status === 'success') {
@@ -1166,8 +1223,6 @@ const getAllUsersByRole = async (req, res) => {
               u.verification_status, u.is_active, u.is_frozen, u.created_at, u.last_ip, u.ip_location,
               CASE
                 WHEN COALESCE(BTRIM(u.ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN u.ip_location
-                WHEN COALESCE(BTRIM(u.verification_country), '') <> '' THEN u.verification_country
-                WHEN COALESCE(BTRIM(u.amazon_location), '') <> '' THEN u.amazon_location
                 ELSE 'Unknown Location'
               END AS location_label,
               COALESCE(stats.completed_orders, 0) AS completed_orders,
@@ -1231,8 +1286,6 @@ const getAdminUserDetailsById = async (req, res) => {
               trust_score, user_rank, is_active, is_frozen, last_ip, ip_location,
               CASE
                 WHEN COALESCE(BTRIM(ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN ip_location
-                WHEN COALESCE(BTRIM(verification_country), '') <> '' THEN verification_country
-                WHEN COALESCE(BTRIM(amazon_location), '') <> '' THEN amazon_location
                 ELSE 'Unknown Location'
               END AS location_label
        FROM users WHERE id = $1`,
