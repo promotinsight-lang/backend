@@ -2,6 +2,11 @@ const axios = require('axios');
 const pool = require('../config/db');
 
 const normalizeCurrencyCode = (currency) => String(currency || '').trim().toUpperCase();
+const normalizeNumericValue = (value, fallback = 0) => {
+    if (value === '' || value === null || value === undefined) return fallback;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 const JSONB_FEE_COLUMNS = new Set([
     'platform_charge_conditions',
@@ -139,6 +144,12 @@ const upsertFeeConfig = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Country and Platform are required fields.' });
         }
 
+        const numericBuyerReward = normalizeNumericValue(buyer_reward, 0);
+        const numericBuyerRefundFee = normalizeNumericValue(buyer_refund_fee, 0);
+        const numericSellerDepositFee = normalizeNumericValue(seller_deposit_fee, 0);
+        const numericSellerWithdrawalFee = normalizeNumericValue(seller_withdrawal_fee, 0);
+        const numericExchangeRate = normalizeNumericValue(exchange_rate, 1) || 1;
+
         // 🔥 LOGIC: Ensure platform_charge is correctly formatted as a JSON string for database storage
         let processedPlatformCharge = platform_charge;
         if (typeof platform_charge === 'object') {
@@ -190,11 +201,11 @@ const upsertFeeConfig = async (req, res) => {
             country: country.trim(),
             platform: platform.trim(),
             platform_charge: processedPlatformCharge,
-            buyer_reward,
-            buyer_refund_fee,
-            seller_deposit_fee,
-            seller_withdrawal_fee,
-            exchange_rate,
+            buyer_reward: numericBuyerReward,
+            buyer_refund_fee: numericBuyerRefundFee,
+            seller_deposit_fee: numericSellerDepositFee,
+            seller_withdrawal_fee: numericSellerWithdrawalFee,
+            exchange_rate: numericExchangeRate,
             platform_charge_conditions: processedPlatformChargeConditions,
             buyer_reward_conditions: processedBuyerRewardConditions,
             verification_fields: processedVerificationFields,
