@@ -34,6 +34,11 @@ const ensureSchema = async () => {
   `);
 
   await pool.query(`
+    ALTER TABLE withdrawals
+      ADD COLUMN IF NOT EXISTS transaction_reference TEXT
+  `);
+
+  await pool.query(`
     UPDATE applications
     SET order_submitted_at = COALESCE(updated_at, created_at)
     WHERE order_submitted_at IS NULL
