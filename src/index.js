@@ -17,7 +17,7 @@ const ensureSchema = require("./utils/ensureSchema");
 require("dotenv").config();
 const privateChatRoutes = require('./routes/privateChatRoutes');
 const app = express();
-app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
+app.set('trust proxy', process.env.NODE_ENV === 'production' ? true : false);
 
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173,https://promotinsight.com")
   .split(",")

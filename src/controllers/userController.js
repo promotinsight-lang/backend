@@ -375,32 +375,20 @@ const resolveGeoLocationLabel = async (geoPayload = {}) => {
 };
 
 const getClientIp = (req) => {
-  const headerCandidates = [
-    req.headers?.["cf-connecting-ip"],
-    req.headers?.["true-client-ip"],
-    req.headers?.["x-real-ip"],
-    req.headers?.["x-forwarded-for"],
-    req.ips?.[0],
-    req.ip,
-    req.socket?.remoteAddress,
-    req.connection?.remoteAddress,
-  ];
-
-  for (const candidate of headerCandidates) {
-    if (!candidate) continue;
-    const values = String(candidate).split(",");
-    for (const value of values) {
-      const normalized = normalizeClientIp(value);
-      if (isPublicIp(normalized)) return normalized;
-    }
-  }
-
-  return "Unknown";
+  return normalizeClientIp(
+    req.ip ||
+    req.headers?.["cf-connecting-ip"] ||
+    req.headers?.["true-client-ip"] ||
+    req.headers?.["x-real-ip"] ||
+    req.headers?.["x-forwarded-for"] ||
+    req.socket?.remoteAddress ||
+    req.connection?.remoteAddress
+  );
 };
 
 // 🔥 PREMIUM: Automated IP to Location Resolver
 const getIpLocation = async (ip) => {
-  if (!ip || ip === 'Unknown' || !isPublicIp(ip)) return 'Unknown Location';
+  if (!ip || ip === 'Unknown' || ip === '::1' || ip === '127.0.0.1') return 'Localhost';
   try {
     const response = await axios.get(`http://ip-api.com/json/${ip}`);
     if (response.data && response.data.status === 'success') {
@@ -1393,6 +1381,8 @@ const getAllUsersByRole = async (req, res) => {
               CASE
                 WHEN COALESCE(BTRIM(u.geo_location_label), '') <> '' THEN u.geo_location_label
                 WHEN COALESCE(BTRIM(u.ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN u.ip_location
+                WHEN COALESCE(BTRIM(u.verification_country), '') <> '' THEN u.verification_country
+                WHEN COALESCE(BTRIM(u.amazon_location), '') <> '' THEN u.amazon_location
                 ELSE 'Unknown Location'
               END AS location_label,
               COALESCE(stats.completed_orders, 0) AS completed_orders,
@@ -1458,6 +1448,8 @@ const getAdminUserDetailsById = async (req, res) => {
               CASE
                 WHEN COALESCE(BTRIM(geo_location_label), '') <> '' THEN geo_location_label
                 WHEN COALESCE(BTRIM(ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN ip_location
+                WHEN COALESCE(BTRIM(verification_country), '') <> '' THEN verification_country
+                WHEN COALESCE(BTRIM(amazon_location), '') <> '' THEN amazon_location
                 ELSE 'Unknown Location'
               END AS location_label
        FROM users WHERE id = $1`,
