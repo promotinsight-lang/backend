@@ -1164,6 +1164,12 @@ const getAllUsersByRole = async (req, res) => {
     const result = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.wallet_balance, u.trust_score, u.user_rank,
               u.verification_status, u.is_active, u.is_frozen, u.created_at, u.last_ip, u.ip_location,
+              CASE
+                WHEN COALESCE(BTRIM(u.ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN u.ip_location
+                WHEN COALESCE(BTRIM(u.verification_country), '') <> '' THEN u.verification_country
+                WHEN COALESCE(BTRIM(u.amazon_location), '') <> '' THEN u.amazon_location
+                ELSE 'Unknown Location'
+              END AS location_label,
               COALESCE(stats.completed_orders, 0) AS completed_orders,
               COALESCE(stats.failed_orders, 0) AS failed_orders,
               COALESCE(stats.total_ranked_orders, 0) AS total_ranked_orders
@@ -1222,7 +1228,13 @@ const getAdminUserDetailsById = async (req, res) => {
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
               whatsapp_account, telegram_account, verification_country, verification_platforms, verification_responses,
-              trust_score, user_rank, is_active, is_frozen, last_ip, ip_location
+              trust_score, user_rank, is_active, is_frozen, last_ip, ip_location,
+              CASE
+                WHEN COALESCE(BTRIM(ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN ip_location
+                WHEN COALESCE(BTRIM(verification_country), '') <> '' THEN verification_country
+                WHEN COALESCE(BTRIM(amazon_location), '') <> '' THEN amazon_location
+                ELSE 'Unknown Location'
+              END AS location_label
        FROM users WHERE id = $1`,
       [userId]
     );
