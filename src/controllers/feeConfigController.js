@@ -3,6 +3,78 @@ const pool = require('../config/db');
 
 const normalizeCurrencyCode = (currency) => String(currency || '').trim().toUpperCase();
 
+const JSONB_FEE_COLUMNS = new Set([
+    'platform_charge_conditions',
+    'buyer_reward_conditions',
+    'verification_fields',
+]);
+
+const getDynamicFeesColumns = async () => {
+    const result = await pool.query(`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'dynamic_fees_config'
+    `);
+
+    return new Set(result.rows.map((row) => row.column_name));
+};
+
+const upsertDynamicFeeConfig = async (fields) => {
+    const existingColumns = await getDynamicFeesColumns();
+    const writableFields = Object.entries(fields)
+        .filter(([column, value]) => value !== undefined && existingColumns.has(column));
+
+    if (!existingColumns.has('country') || !existingColumns.has('platform')) {
+        throw new Error('dynamic_fees_config table is missing country/platform columns.');
+    }
+
+    const updateFields = writableFields.filter(([column]) => !['country', 'platform'].includes(column));
+    const updateAssignments = updateFields.map(([column], index) => {
+        const paramIndex = index + 3;
+        const placeholder = JSONB_FEE_COLUMNS.has(column) ? `$${paramIndex}::jsonb` : `$${paramIndex}`;
+        return `${column} = ${placeholder}`;
+    });
+
+    if (existingColumns.has('updated_at')) {
+        updateAssignments.push('updated_at = CURRENT_TIMESTAMP');
+    }
+
+    const updateValues = [
+        fields.country,
+        fields.platform,
+        ...updateFields.map(([, value]) => value),
+    ];
+
+    if (updateAssignments.length > 0) {
+        const updateResult = await pool.query(
+            `UPDATE dynamic_fees_config
+             SET ${updateAssignments.join(', ')}
+             WHERE LOWER(country) = LOWER($1) AND LOWER(platform) = LOWER($2)
+             RETURNING *`,
+            updateValues
+        );
+
+        if (updateResult.rows.length > 0) {
+            return updateResult;
+        }
+    }
+
+    const insertColumns = writableFields.map(([column]) => column);
+    const insertValues = writableFields.map(([, value]) => value);
+    const placeholders = insertColumns.map((column, index) => {
+        const placeholder = `$${index + 1}`;
+        return JSONB_FEE_COLUMNS.has(column) ? `${placeholder}::jsonb` : placeholder;
+    });
+
+    return pool.query(
+        `INSERT INTO dynamic_fees_config (${insertColumns.join(', ')})
+         VALUES (${placeholders.join(', ')})
+         RETURNING *`,
+        insertValues
+    );
+};
+
 const getLiveExchangeRate = async (req, res) => {
     try {
         const currency = normalizeCurrencyCode(req.query.currency);
@@ -113,76 +185,27 @@ const upsertFeeConfig = async (req, res) => {
             processedVerificationFields = '[]';
         }
 
-        // UPSERT Query with exchange_rate + verification_fields
-        const query = `
-            INSERT INTO dynamic_fees_config (
-                country, platform, platform_charge, buyer_reward, 
-                buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee, exchange_rate,
-                platform_charge_conditions,
-                buyer_reward_conditions,
-                verification_fields
-            ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb)
-            ON CONFLICT (country, platform) 
-            DO UPDATE SET 
-                platform_charge = EXCLUDED.platform_charge,
-                buyer_reward = EXCLUDED.buyer_reward,
-                buyer_refund_fee = EXCLUDED.buyer_refund_fee,
-                seller_deposit_fee = EXCLUDED.seller_deposit_fee,
-                seller_withdrawal_fee = EXCLUDED.seller_withdrawal_fee,
-                exchange_rate = EXCLUDED.exchange_rate,
-                platform_charge_conditions = EXCLUDED.platform_charge_conditions,
-                buyer_reward_conditions = EXCLUDED.buyer_reward_conditions,
-                verification_fields = EXCLUDED.verification_fields,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING *;
-        `;
-
-        const values = [
-            country.trim(), 
-            platform.trim(), 
-            processedPlatformCharge, 
+        const existingColumns = await getDynamicFeesColumns();
+        const result = await upsertDynamicFeeConfig({
+            country: country.trim(),
+            platform: platform.trim(),
+            platform_charge: processedPlatformCharge,
             buyer_reward,
-            buyer_refund_fee, 
-            seller_deposit_fee, 
+            buyer_refund_fee,
+            seller_deposit_fee,
             seller_withdrawal_fee,
             exchange_rate,
-            processedPlatformChargeConditions,
-            processedBuyerRewardConditions,
-            processedVerificationFields
-        ];
+            platform_charge_conditions: processedPlatformChargeConditions,
+            buyer_reward_conditions: processedBuyerRewardConditions,
+            verification_fields: processedVerificationFields,
+        });
 
-        let result;
-        try {
-            result = await pool.query(query, values);
-        } catch (dbErr) {
-            // Fallback when verification_fields column is not migrated yet
-            const legacyQuery = `
-            INSERT INTO dynamic_fees_config (
-                country, platform, platform_charge, buyer_reward, 
-                buyer_refund_fee, seller_deposit_fee, seller_withdrawal_fee, exchange_rate
-            ) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (country, platform) 
-            DO UPDATE SET 
-                platform_charge = EXCLUDED.platform_charge,
-                buyer_reward = EXCLUDED.buyer_reward,
-                buyer_refund_fee = EXCLUDED.buyer_refund_fee,
-                seller_deposit_fee = EXCLUDED.seller_deposit_fee,
-                seller_withdrawal_fee = EXCLUDED.seller_withdrawal_fee,
-                exchange_rate = EXCLUDED.exchange_rate,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING *;
-        `;
-            result = await pool.query(legacyQuery, values.slice(0, 8));
-
-            if (Array.isArray(verification_fields) && verification_fields.length > 0) {
-                try {
-                    const { savePlatformFieldsToStore } = require('./verificationConfigController');
-                    await savePlatformFieldsToStore(country, platform, verification_fields);
-                } catch (innerErr) {
-                    console.warn('Saved tariffs; platform verification fields stored separately.', innerErr.message);
-                }
+        if (!existingColumns.has('verification_fields') && Array.isArray(verification_fields) && verification_fields.length > 0) {
+            try {
+                const { savePlatformFieldsToStore } = require('./verificationConfigController');
+                await savePlatformFieldsToStore(country, platform, verification_fields);
+            } catch (innerErr) {
+                console.warn('Saved tariffs; platform verification fields stored separately.', innerErr.message);
             }
         }
 
