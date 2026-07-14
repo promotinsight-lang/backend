@@ -13,7 +13,12 @@ const ensureSchema = async () => {
       ADD COLUMN IF NOT EXISTS telegram_account TEXT,
       ADD COLUMN IF NOT EXISTS verification_country TEXT,
       ADD COLUMN IF NOT EXISTS verification_platforms JSONB,
-      ADD COLUMN IF NOT EXISTS verification_responses JSONB
+      ADD COLUMN IF NOT EXISTS verification_responses JSONB,
+      ADD COLUMN IF NOT EXISTS geo_latitude NUMERIC(10, 7),
+      ADD COLUMN IF NOT EXISTS geo_longitude NUMERIC(10, 7),
+      ADD COLUMN IF NOT EXISTS geo_accuracy NUMERIC(10, 2),
+      ADD COLUMN IF NOT EXISTS geo_location_label TEXT,
+      ADD COLUMN IF NOT EXISTS geo_source VARCHAR(50)
   `);
 
   await pool.query(`

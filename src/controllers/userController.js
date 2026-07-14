@@ -8,6 +8,7 @@ const resend = resendApiKey ? new Resend(resendApiKey) : null;
 const crypto = require("crypto");
 const svgCaptcha = require("svg-captcha"); 
 const axios = require("axios"); // 🔥 NEW: Axios for API calls
+const net = require("net");
 const firebaseAdmin = require("../config/firebaseAdmin");
 const { getBuyerWalletBreakdown } = require("../utils/buyerWalletBreakdown");
 
@@ -17,6 +18,7 @@ const { getBuyerWalletBreakdown } = require("../utils/buyerWalletBreakdown");
 
 const captchaCache = new Map(); 
 const otpCache = new Map();     
+const geoLocationCache = new Map();
 
 if (!resend) {
   console.warn("RESEND_API_KEY is not configured; email-dependent endpoints will return 503.");
@@ -280,6 +282,96 @@ const isPrivateIp = (ip) => {
 const isPublicIp = (ip) => {
   const normalized = normalizeClientIp(ip);
   return normalized !== "Unknown" && !isPrivateIp(normalized);
+};
+
+const normalizeOptionalText = (value) => {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+};
+
+const normalizeOptionalNumber = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const extractGeoPayload = (body = {}) => ({
+  latitude: normalizeOptionalNumber(body.geo_latitude ?? body.latitude),
+  longitude: normalizeOptionalNumber(body.geo_longitude ?? body.longitude),
+  accuracy: normalizeOptionalNumber(body.geo_accuracy ?? body.accuracy),
+  locationLabel: normalizeOptionalText(
+    body.geo_location_label ?? body.location_label ?? body.geo_address ?? body.geo_address_label
+  ),
+  source: normalizeOptionalText(body.geo_source ?? body.location_source),
+});
+
+const hasBrowserGeoCoordinates = (geoPayload = {}) => {
+  const { latitude, longitude } = geoPayload;
+  return Number.isFinite(latitude)
+    && Number.isFinite(longitude)
+    && latitude >= -90
+    && latitude <= 90
+    && longitude >= -180
+    && longitude <= 180;
+};
+
+const getGeoSource = (geoPayload = {}) => (
+  hasBrowserGeoCoordinates(geoPayload) || geoPayload.locationLabel
+    ? geoPayload.source || 'browser_geolocation'
+    : null
+);
+
+const formatGeoFallbackLabel = (geoPayload = {}) => (
+  hasBrowserGeoCoordinates(geoPayload)
+    ? `${Number(geoPayload.latitude).toFixed(5)}, ${Number(geoPayload.longitude).toFixed(5)}`
+    : null
+);
+
+const buildReverseGeoLabel = (data) => {
+  const address = data?.address || {};
+  const locality = address.city || address.town || address.village || address.municipality || address.county || address.state_district;
+  const region = address.state || address.division;
+  const country = address.country;
+  return normalizeOptionalText([locality, region, country].filter(Boolean).join(', '))
+    || normalizeOptionalText(data?.display_name);
+};
+
+const resolveGeoLocationLabel = async (geoPayload = {}) => {
+  if (geoPayload.locationLabel) return geoPayload.locationLabel;
+  if (!hasBrowserGeoCoordinates(geoPayload)) return null;
+
+  const lat = Number(geoPayload.latitude);
+  const lon = Number(geoPayload.longitude);
+  const cacheKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  if (geoLocationCache.has(cacheKey)) return geoLocationCache.get(cacheKey);
+
+  const fallback = formatGeoFallbackLabel(geoPayload);
+
+  try {
+    const response = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+      params: {
+        format: 'jsonv2',
+        lat,
+        lon,
+        zoom: 10,
+        addressdetails: 1,
+      },
+      headers: {
+        'User-Agent': process.env.GEOLOCATION_USER_AGENT || 'PromotInsight/1.0',
+        'Accept-Language': 'en',
+      },
+      timeout: 5000,
+    });
+
+    const label = buildReverseGeoLabel(response.data) || fallback;
+    geoLocationCache.set(cacheKey, label);
+    return label;
+  } catch (error) {
+    console.error("Browser Location Reverse Geocode Error:", error.message);
+    geoLocationCache.set(cacheKey, fallback);
+    return fallback;
+  }
 };
 
 const getClientIp = (req) => {
@@ -566,10 +658,13 @@ const registerUser = async (req, res) => {
     const { name, fullName, email, password, role, otp, referred_by_code } = req.body;
     const finalName = name ? name.trim() : (fullName ? fullName.trim() : '');
     const emailTrimmed = email ? email.trim().toLowerCase() : '';
+    const geoPayload = extractGeoPayload(req.body);
     
     // 🔥 Track IP and Location on Register
     const ipAddress = getClientIp(req); 
     const ipLocation = await getIpLocation(ipAddress);
+    const geoLocationLabel = await resolveGeoLocationLabel(geoPayload);
+    const geoSource = getGeoSource(geoPayload);
 
     if (!finalName || !emailTrimmed || !password || !otp) {
       return res.status(400).json({ success: false, message: "All fields including verification code are required" });
@@ -627,10 +722,25 @@ const registerUser = async (req, res) => {
 
     // 🔥 Add IP, Location, Referral Code, and Referrer ID to insertion
     const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance, trust_score)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)
+      `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, geo_latitude, geo_longitude, geo_accuracy, geo_location_label, geo_source, referral_code, referred_by, wallet_balance, trust_score)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0)
        RETURNING id, name, email, role, verification_status, wallet_balance, trust_score`,
-      [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById, registrationBonus]
+      [
+        finalName,
+        emailTrimmed,
+        hashedPassword,
+        userRole,
+        ipAddress,
+        ipLocation,
+        geoPayload.latitude,
+        geoPayload.longitude,
+        geoPayload.accuracy,
+        geoLocationLabel,
+        geoSource,
+        newReferralCode,
+        referredById,
+        registrationBonus
+      ]
     );
 
     const user = result.rows[0];
@@ -677,10 +787,13 @@ const registerUser = async (req, res) => {
 const loginUser = async (req, res) => {
   try {
     const { email, password, captchaId, captchaInput } = req.body;
+    const geoPayload = extractGeoPayload(req.body);
     
     // 🔥 Track IP and Location on Login
     const ipAddress = getClientIp(req); 
     const ipLocation = await getIpLocation(ipAddress);
+    const geoLocationLabel = await resolveGeoLocationLabel(geoPayload);
+    const geoSource = getGeoSource(geoPayload);
 
     if (!email || !password) {
       return res.status(400).json({ success: false, message: "Email and password required" });
@@ -723,7 +836,27 @@ const loginUser = async (req, res) => {
     captchaCache.delete(captchaId);
     
     // 🔥 Update last IP and Location on successful login
-    await pool.query("UPDATE users SET last_ip = $1, ip_location = $2 WHERE id = $3", [ipAddress, ipLocation, user.id]);
+    await pool.query(
+      `UPDATE users
+       SET last_ip = $1,
+           ip_location = $2,
+           geo_latitude = COALESCE($3, geo_latitude),
+           geo_longitude = COALESCE($4, geo_longitude),
+           geo_accuracy = COALESCE($5, geo_accuracy),
+           geo_location_label = COALESCE($6, geo_location_label),
+           geo_source = COALESCE($7, geo_source)
+       WHERE id = $8`,
+      [
+        ipAddress,
+        ipLocation,
+        geoPayload.latitude,
+        geoPayload.longitude,
+        geoPayload.accuracy,
+        geoLocationLabel,
+        geoSource,
+        user.id
+      ]
+    );
 
     const token = jwt.sign(
       { id: user.id, role: user.role },
@@ -751,10 +884,13 @@ const loginUser = async (req, res) => {
 const socialLogin = async (req, res) => {
   try {
     const { idToken, referred_by_code, role } = req.body;
+    const geoPayload = extractGeoPayload(req.body);
     
     // 🔥 Track IP and Location on Social Login
     const ipAddress = getClientIp(req); 
     const ipLocation = await getIpLocation(ipAddress);
+    const geoLocationLabel = await resolveGeoLocationLabel(geoPayload);
+    const geoSource = getGeoSource(geoPayload);
 
     if (!idToken) {
       return res.status(400).json({ success: false, message: "Firebase idToken is required for social login" });
@@ -817,10 +953,27 @@ if (existingUser.rows.length > 0) {
   console.log("DB Role:", user.role);
   console.log("Requested Role:", role);
 
-  await pool.query(
-    "UPDATE users SET last_ip = $1, ip_location = $2 WHERE id = $3",
-    [ipAddress, ipLocation, user.id]
-  );
+    await pool.query(
+      `UPDATE users
+       SET last_ip = $1,
+           ip_location = $2,
+           geo_latitude = COALESCE($3, geo_latitude),
+           geo_longitude = COALESCE($4, geo_longitude),
+           geo_accuracy = COALESCE($5, geo_accuracy),
+           geo_location_label = COALESCE($6, geo_location_label),
+           geo_source = COALESCE($7, geo_source)
+       WHERE id = $8`,
+      [
+        ipAddress,
+        ipLocation,
+        geoPayload.latitude,
+        geoPayload.longitude,
+        geoPayload.accuracy,
+        geoLocationLabel,
+        geoSource,
+        user.id
+      ]
+    );
   await updateSocialProviderMetadata(user.id, provider, providerUid);
 } else {
       const randomPassword = crypto.randomBytes(16).toString('hex');
@@ -843,10 +996,25 @@ if (existingUser.rows.length > 0) {
 
       // 🔥 Insert IP, Location, and Referral Data for new social login user
       const newUser = await pool.query(
-        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, referral_code, referred_by, wallet_balance, trust_score)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0)
+        `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, geo_latitude, geo_longitude, geo_accuracy, geo_location_label, geo_source, referral_code, referred_by, wallet_balance, trust_score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0)
          RETURNING id, name, email, role, verification_status, wallet_balance, trust_score`,
-        [finalName, emailTrimmed, hashedPassword, userRole, ipAddress, ipLocation, newReferralCode, referredById, registrationBonus]
+        [
+          finalName,
+          emailTrimmed,
+          hashedPassword,
+          userRole,
+          ipAddress,
+          ipLocation,
+          geoPayload.latitude,
+          geoPayload.longitude,
+          geoPayload.accuracy,
+          geoLocationLabel,
+          geoSource,
+          newReferralCode,
+          referredById,
+          registrationBonus
+        ]
       );
       
       user = newUser.rows[0];
@@ -1221,7 +1389,9 @@ const getAllUsersByRole = async (req, res) => {
     const result = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.wallet_balance, u.trust_score, u.user_rank,
               u.verification_status, u.is_active, u.is_frozen, u.created_at, u.last_ip, u.ip_location,
+              u.geo_latitude, u.geo_longitude, u.geo_accuracy, u.geo_location_label, u.geo_source,
               CASE
+                WHEN COALESCE(BTRIM(u.geo_location_label), '') <> '' THEN u.geo_location_label
                 WHEN COALESCE(BTRIM(u.ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN u.ip_location
                 ELSE 'Unknown Location'
               END AS location_label,
@@ -1284,7 +1454,9 @@ const getAdminUserDetailsById = async (req, res) => {
               amazon_profile_url, paypal_account, facebook_account, 
               whatsapp_account, telegram_account, verification_country, verification_platforms, verification_responses,
               trust_score, user_rank, is_active, is_frozen, last_ip, ip_location,
+              geo_latitude, geo_longitude, geo_accuracy, geo_location_label, geo_source,
               CASE
+                WHEN COALESCE(BTRIM(geo_location_label), '') <> '' THEN geo_location_label
                 WHEN COALESCE(BTRIM(ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN ip_location
                 ELSE 'Unknown Location'
               END AS location_label
