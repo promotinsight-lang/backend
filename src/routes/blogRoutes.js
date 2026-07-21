@@ -19,6 +19,7 @@ const {
   updateBlog,
   deleteBlog
 } = require("../controllers/blogController");
+const { rebuildFrontendSite } = require("../controllers/siteRebuildController");
 
 // ==========================================
 // 🌍 PUBLIC ROUTES (Kono Login/Auth lagbe na)
@@ -40,6 +41,9 @@ router.put("/:id", protect, isAdmin, upload.single("image"), updateBlog);
 
 // Admin panel-e sob blog (published + draft) eksathe dekhar jonno
 router.get("/admin/all", protect, isAdmin, getAllBlogsAdmin);
+
+// Published blog data change hole prerendered frontend blog pages rebuild korar jonno
+router.post("/admin/rebuild-site", protect, isAdmin, rebuildFrontendSite);
 
 // Kono blog delete korar jonno
 router.delete("/:id", protect, isAdmin, deleteBlog);
