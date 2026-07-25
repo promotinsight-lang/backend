@@ -30,7 +30,7 @@ const getIpLocation = async (ip) => {
   try {
     const response = await axios.get(`http://ip-api.com/json/${ip}`);
     if (response.data && response.data.status === 'success') {
-      return `${response.data.city}, ${response.data.country}`;
+      return response.data.country || 'Unknown Location';
     }
     return 'Unknown Location';
   } catch (error) {

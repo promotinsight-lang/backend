@@ -392,7 +392,7 @@ const getIpLocation = async (ip) => {
   try {
     const response = await axios.get(`http://ip-api.com/json/${ip}`);
     if (response.data && response.data.status === 'success') {
-      return `${response.data.city}, ${response.data.country}`;
+      return response.data.country || 'Unknown Location';
     }
     return 'Unknown Location';
   } catch (error) {
@@ -1379,7 +1379,6 @@ const getAllUsersByRole = async (req, res) => {
               u.verification_status, u.is_active, u.is_frozen, u.created_at, u.last_ip, u.ip_location,
               u.geo_latitude, u.geo_longitude, u.geo_accuracy, u.geo_location_label, u.geo_source,
               CASE
-                WHEN COALESCE(BTRIM(u.geo_location_label), '') <> '' THEN u.geo_location_label
                 WHEN COALESCE(BTRIM(u.ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN u.ip_location
                 WHEN COALESCE(BTRIM(u.verification_country), '') <> '' THEN u.verification_country
                 WHEN COALESCE(BTRIM(u.amazon_location), '') <> '' THEN u.amazon_location
@@ -1446,7 +1445,6 @@ const getAdminUserDetailsById = async (req, res) => {
               trust_score, user_rank, is_active, is_frozen, last_ip, ip_location,
               geo_latitude, geo_longitude, geo_accuracy, geo_location_label, geo_source,
               CASE
-                WHEN COALESCE(BTRIM(geo_location_label), '') <> '' THEN geo_location_label
                 WHEN COALESCE(BTRIM(ip_location), '') NOT IN ('', 'Unknown', 'Unknown Location', 'Location Unavailable') THEN ip_location
                 WHEN COALESCE(BTRIM(verification_country), '') <> '' THEN verification_country
                 WHEN COALESCE(BTRIM(amazon_location), '') <> '' THEN amazon_location
