@@ -388,11 +388,11 @@ const getClientIp = (req) => {
 
 // 🔥 PREMIUM: Automated IP to Location Resolver
 const getIpLocation = async (ip) => {
-  if (!ip || ip === 'Unknown' || ip === '::1' || ip === '127.0.0.1') return 'Unknown Location';
+  if (!ip || ip === 'Unknown' || ip === '::1' || ip === '127.0.0.1') return 'Localhost';
   try {
     const response = await axios.get(`http://ip-api.com/json/${ip}`);
     if (response.data && response.data.status === 'success') {
-      return response.data.country || 'Unknown Location';
+      return [response.data.city, response.data.country].filter(Boolean).join(', ') || 'Unknown Location';
     }
     return 'Unknown Location';
   } catch (error) {
