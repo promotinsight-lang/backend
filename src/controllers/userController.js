@@ -284,6 +284,23 @@ const isPublicIp = (ip) => {
   return normalized !== "Unknown" && !isPrivateIp(normalized);
 };
 
+const getForwardedClientIp = (req) => {
+  const candidates = [
+    req.headers?.["cf-connecting-ip"],
+    req.headers?.["true-client-ip"],
+    req.headers?.["x-real-ip"],
+    req.headers?.["x-forwarded-for"],
+    req.ip,
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress
+  ]
+    .flatMap((value) => String(value || '').split(','))
+    .map(normalizeClientIp)
+    .filter((ip) => ip !== 'Unknown');
+
+  return candidates.find(isPublicIp) || candidates[0] || 'Unknown';
+};
+
 const normalizeOptionalText = (value) => {
   if (value === null || value === undefined) return null;
   const normalized = String(value).trim();
@@ -375,15 +392,7 @@ const resolveGeoLocationLabel = async (geoPayload = {}) => {
 };
 
 const getClientIp = (req) => {
-  return normalizeClientIp(
-    req.ip ||
-    req.headers?.["cf-connecting-ip"] ||
-    req.headers?.["true-client-ip"] ||
-    req.headers?.["x-real-ip"] ||
-    req.headers?.["x-forwarded-for"] ||
-    req.socket?.remoteAddress ||
-    req.connection?.remoteAddress
-  );
+  return getForwardedClientIp(req);
 };
 
 // 🔥 PREMIUM: Automated IP to Location Resolver

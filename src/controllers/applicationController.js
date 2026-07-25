@@ -16,12 +16,40 @@ const escapeHTML = (str) => {
 // 🔥 IP Tracking Helper
 const normalizeClientIp = (ip) => {
   if (!ip) return "Unknown";
-  const normalized = String(ip).replace(/^::ffff:/, "").trim();
+  const normalized = String(ip).trim().replace(/^::ffff:/, "");
   return normalized || "Unknown";
 };
 
+const isPrivateIp = (ip) => {
+  const normalized = normalizeClientIp(ip);
+  if (normalized === "Unknown") return true;
+  if (/^(10|127)\./.test(normalized)) return true;
+  if (/^192\.168\./.test(normalized)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(normalized)) return true;
+  const lower = normalized.toLowerCase();
+  return lower === "::1"
+    || lower.startsWith("fc")
+    || lower.startsWith("fd")
+    || lower.startsWith("fe80:");
+};
+
+const isPublicIp = (ip) => normalizeClientIp(ip) !== "Unknown" && !isPrivateIp(ip);
+
 const getClientIp = (req) => {
-  return normalizeClientIp(req.ip || req.socket?.remoteAddress);
+  const candidates = [
+    req.headers?.["cf-connecting-ip"],
+    req.headers?.["true-client-ip"],
+    req.headers?.["x-real-ip"],
+    req.headers?.["x-forwarded-for"],
+    req.ip,
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress
+  ]
+    .flatMap((value) => String(value || '').split(','))
+    .map(normalizeClientIp)
+    .filter((ip) => ip !== 'Unknown');
+
+  return candidates.find(isPublicIp) || candidates[0] || 'Unknown';
 };
 
 // 🔥 Automated IP to Location Resolver
