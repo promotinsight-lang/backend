@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const { sendEmail } = require("../utils/emailService");
 
 // 🛡️ XSS Protection Utility
 const escapeHTML = (str) => {
@@ -154,6 +155,26 @@ const verifyUser = async (req, res) => {
     );
 
     if (result.rows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
+    
+    const updatedUser = result.rows[0];
+
+    // 🔥 NEW: Send Approval Email
+    if (status === 'approved') {
+      await sendEmail({
+        to: updatedUser.email,
+        subject: "Your Promotinsight Account is Approved!",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333; padding: 20px; border: 1px solid #eaeaea; border-radius: 8px;">
+            <h2 style="color: #10b981;">Congratulations, ${updatedUser.name}!</h2>
+            <p>Your account verification has been approved by the admin.</p>
+            <p>You can now fully access the platform's features.</p>
+            <br>
+            <p>Best regards,<br><strong>The Promotinsight Team</strong></p>
+          </div>
+        `
+      });
+    }
+
     res.status(200).json({ success: true, message: `User ${status} successfully` });
   } catch (error) {
     console.error("VERIFY USER ERROR:", error);

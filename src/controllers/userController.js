@@ -2,9 +2,7 @@ const pool = require("../config/db");
 const { addAutomaticRank } = require("../utils/userRank");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { Resend } = require("resend");
-const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
-const resend = resendApiKey ? new Resend(resendApiKey) : null;
+const { sendEmail, resend } = require("../utils/emailService");
 const crypto = require("crypto");
 const svgCaptcha = require("svg-captcha"); 
 const axios = require("axios"); // 🔥 NEW: Axios for API calls
@@ -765,6 +763,21 @@ const registerUser = async (req, res) => {
     );
 
     res.cookie('token', token, getCookieOptions());
+
+    // 🔥 NEW: Send Welcome Email
+    await sendEmail({
+      to: emailTrimmed,
+      subject: "Welcome to Promotinsight!",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333; padding: 20px; border: 1px solid #eaeaea; border-radius: 8px;">
+          <h2 style="color: #10b981;">Welcome to Promotinsight, ${finalName}!</h2>
+          <p>Thank you for signing up. We are thrilled to have you on board.</p>
+          <p>Start exploring our platform and discovering great products today.</p>
+          <br>
+          <p>Best regards,<br><strong>The Promotinsight Team</strong></p>
+        </div>
+      `
+    });
 
     res.status(201).json({ 
       success: true,
