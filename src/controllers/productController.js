@@ -646,7 +646,7 @@ const getProductById = async (req, res) => {
     }
 
     if (userRole === 'buyer') {
-      return res.status(200).json({ success: true, data: publicProductFields(product) });
+      return res.status(200).json({ success: true, data: { ...publicProductFields(product), instructions: product.instructions } });
     }
     res.status(403).json({ success: false, message: "Access denied" });
   } catch (error) {
