@@ -154,6 +154,7 @@ const announcementRoutes = require("./routes/announcementRoutes");
 const blogRoutes = require("./routes/blogRoutes"); 
 const feeConfigRoutes = require("./routes/feeConfigRoutes");
 const verificationConfigRoutes = require("./routes/verificationConfigRoutes");
+const platformSettingsRoutes = require("./routes/platformSettingsRoutes");
 
 // 🔥 NEW: Payment Method Routes Import
 const paymentMethodRoutes = require("./routes/paymentMethodRoutes");
@@ -170,6 +171,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/blogs", blogRoutes); 
 app.use("/api/config/fees", feeConfigRoutes);
 app.use("/api/config/verification", verificationConfigRoutes);
+app.use("/api/config/platform-settings", platformSettingsRoutes);
 app.use('/api/private-chat', privateChatRoutes);
 // 🔥 NEW: Payment Method Routes Mount
 app.use("/api/payment-methods", paymentMethodRoutes);

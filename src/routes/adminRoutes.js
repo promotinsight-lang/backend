@@ -17,6 +17,7 @@ const {
   getPlatformVerificationFields,
   updatePlatformVerificationFields,
 } = require("../controllers/verificationConfigController");
+const { getPublicPlatformSettings, updatePlatformSettings } = require("../controllers/platformSettingsController");
 
 const adminActionLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -38,6 +39,8 @@ router.patch("/deposits/:id/reject", adminActionLimiter, rejectDeposit);
 
 // Settings
 router.patch("/payment-settings/:id", adminActionLimiter, updatePaymentSetting);
+router.get("/platform-settings", getPublicPlatformSettings);
+router.put("/platform-settings", adminActionLimiter, updatePlatformSettings);
 
 // Users
 router.get("/verifications", getPendingVerifications);

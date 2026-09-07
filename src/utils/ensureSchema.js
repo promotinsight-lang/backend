@@ -145,6 +145,14 @@ const ensureSchema = async () => {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS platform_settings (
+      key VARCHAR(100) PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_reference_id
       ON transactions(reference_id)
       WHERE reference_id IS NOT NULL
