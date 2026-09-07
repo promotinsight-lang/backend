@@ -29,7 +29,7 @@ const startCronJobs = () => {
             }
 
             for (let app of result.rows) {
-                const totalCashback = parseFloat(app.price) + parseFloat(app.reward);
+                const totalAmount = parseFloat(app.price) || 0;
 
                 // 1. Status 'completed' kora
                 await client.query(
@@ -40,7 +40,7 @@ const startCronJobs = () => {
                 // 2. Buyer-er wallet-e balance add kora securely
                 await client.query(
                     `UPDATE users SET wallet_balance = wallet_balance + $1 WHERE id = $2`, 
-                    [totalCashback, app.user_id]
+                    [totalAmount, app.user_id]
                 );
                 
                 console.log(`✅ Auto-approved application ID: ${app.id} for User ID: ${app.user_id}`);

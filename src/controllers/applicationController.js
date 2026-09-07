@@ -5,8 +5,6 @@ const {
   normalizeCampaignCategoryKey,
 } = require("../utils/campaignCategories");
 
-const REFERRAL_REWARDS_ENABLED = false;
-
 // 🛡️ XSS Protection Utility
 const escapeHTML = (str) => {
   if (typeof str !== 'string') return str;
@@ -67,84 +65,6 @@ const getIpLocation = async (ip) => {
     console.error("IP Location Fetch Error:", error.message);
     return 'Location Unavailable';
   }
-};
-
-const creditBuyerRewardOnce = async (client, { userId, reward, applicationId }) => {
-  const buyerReward = parseFloat(reward) || 0;
-  if (buyerReward <= 0) return;
-
-  await client.query(
-    `WITH inserted_reward AS (
-       INSERT INTO transactions (user_id, amount, type, description, status, reference_id)
-       VALUES ($1, $2, 'refund', $3, 'completed', $4)
-       ON CONFLICT DO NOTHING
-       RETURNING amount
-     )
-     UPDATE users
-     SET wallet_balance = COALESCE(wallet_balance, 0) + (SELECT amount FROM inserted_reward)
-     WHERE id = $1
-       AND EXISTS (SELECT 1 FROM inserted_reward)`,
-    [
-      userId,
-      buyerReward,
-      `Buyer reward for seller-paid Application #${applicationId}`,
-      `seller_reward_${applicationId}`,
-    ]
-  );
-};
-
-const creditSellerReferralBonusIfEligible = async (client, sellerId) => {
-  if (!REFERRAL_REWARDS_ENABLED) return;
-  if (!sellerId) return;
-
-  const sellerStats = await client.query(
-    `SELECT u.referred_by, COUNT(a.id)::int AS completed_orders
-     FROM users u
-     LEFT JOIN products p ON p.seller_id = u.id
-     LEFT JOIN applications a ON a.product_id = p.id AND a.status = 'completed'
-     WHERE u.id = $1 AND u.role = 'seller'
-     GROUP BY u.id, u.referred_by`,
-    [sellerId]
-  );
-
-  if (sellerStats.rows.length === 0) return;
-
-  const seller = sellerStats.rows[0];
-  const completedOrders = parseInt(seller.completed_orders, 10) || 0;
-  if (!seller.referred_by || completedOrders < 5) return;
-
-  const referralCheck = await client.query(
-    `SELECT r.referrer_id, GREATEST(COALESCE(r.reward_amount, 0), 15)::numeric AS reward_amount
-     FROM referrals r
-     JOIN users referrer ON referrer.id = r.referrer_id
-     WHERE r.referrer_id = $1
-       AND r.referred_id = $2
-       AND r.status = 'pending'
-       AND referrer.role = 'buyer'
-     FOR UPDATE OF r`,
-    [seller.referred_by, sellerId]
-  );
-
-  if (referralCheck.rows.length === 0) return;
-
-  const referral = referralCheck.rows[0];
-  const rewardAmount = parseFloat(referral.reward_amount) || 15;
-
-  await client.query(
-    `UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2`,
-    [rewardAmount, referral.referrer_id]
-  );
-
-  await client.query(
-    `UPDATE referrals SET status = 'completed', reward_amount = $1, updated_at = CURRENT_TIMESTAMP WHERE referrer_id = $2 AND referred_id = $3`,
-    [rewardAmount, referral.referrer_id, sellerId]
-  );
-
-  await client.query(
-    `INSERT INTO transactions (user_id, amount, type, description, status)
-     VALUES ($1, $2, 'referral_bonus', $3, 'completed')`,
-    [referral.referrer_id, rewardAmount, `Seller referral bonus after referred seller completed 5 orders`]
-  );
 };
 
 const updateApplicationStatus = async (req, res, options) => {
@@ -624,13 +544,7 @@ const sellerApproveReview = async (req, res) => {
       await client.query("COMMIT");
       return res.json({ success: true, message: "Verified by Seller. Sent to Admin for final refund processing." });
     } else {
-      await creditBuyerRewardOnce(client, {
-        userId: app.user_id,
-        reward: app.reward,
-        applicationId,
-      });
       await client.query(`UPDATE applications SET status = 'completed' WHERE id = $1`, [applicationId]);
-      await creditSellerReferralBonusIfEligible(client, app.seller_id);
       await client.query("COMMIT");
       return res.json({ success: true, message: "Approved successfully." });
     }
@@ -694,12 +608,6 @@ const submitSellerPaymentProof = async (req, res) => {
       });
     }
 
-    await creditBuyerRewardOnce(client, {
-      userId: app.user_id,
-      reward: app.reward,
-      applicationId,
-    });
-
     const result = await client.query(
       `UPDATE applications
        SET seller_payment_transaction_id = $1,
@@ -716,8 +624,6 @@ const submitSellerPaymentProof = async (req, res) => {
         applicationId,
       ]
     );
-
-    await creditSellerReferralBonusIfEligible(client, app.seller_id);
 
     await client.query("COMMIT");
     res.status(200).json({ success: true, message: "Payment proof submitted and order completed.", data: result.rows[0] });
@@ -773,8 +679,7 @@ const confirmRefund = async (req, res) => {
 
     // 🔥 NaN এরর ঠেকানোর জন্য Safe Parsing
     const safePrice = parseFloat(app.price) || 0;
-    const safeReward = parseFloat(app.reward) || 0;
-    const totalGrossAmount = safePrice + safeReward;
+    const totalGrossAmount = safePrice;
     
     let finalRefundAmount = totalGrossAmount;
     let refundFeeAmount = 0;
@@ -790,7 +695,7 @@ const confirmRefund = async (req, res) => {
       
       const exchangeRate = feeResult.rows.length > 0 && feeResult.rows[0].exchange_rate ? parseFloat(feeResult.rows[0].exchange_rate) : 1;
 
-      // ফি এর ক্যালকুলেশন রিমুভ করে বায়ারকে সম্পূর্ণ টাকা (Price + Reward) দেওয়া হলো
+      // Buyer reward is disabled; only the product amount is processed.
       refundFeeAmount = 0; 
       finalRefundAmount = totalGrossAmount; 
 
@@ -811,60 +716,11 @@ const confirmRefund = async (req, res) => {
       [finalOrderText, refund_comment ? escapeHTML(refund_comment.trim()) : null, applicationId]
     );
 
-    await creditSellerReferralBonusIfEligible(client, app.seller_id);
-
    if (normalizeCampaignCategoryKey(app.category) !== 'pre_pay') {
         await client.query(
             "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'refund', $3, 'completed')",
             [app.user_id, finalRefundAmount, `Refund received for Application #${applicationId}. Added: $${finalRefundAmount.toFixed(2)} USD (~${localRefundAmount} ${localCurrencyCode}).`]
         );
-    }
-
-    // ==========================================
-    // 🎁 REFERRAL BONUS LOGIC
-    // ==========================================
-    if (REFERRAL_REWARDS_ENABLED && app.referred_by) {
-      const referredUserAppsCount = await client.query(
-        `SELECT COUNT(*) FROM applications WHERE user_id = $1 AND status = 'completed'`,
-        [app.user_id]
-      );
-      
-      const completedAppsByReferredUser = parseInt(referredUserAppsCount.rows[0].count) + 1; 
-
-      if (completedAppsByReferredUser >= 5) {
-        const referrerAppsCount = await client.query(
-          `SELECT COUNT(*) FROM applications WHERE user_id = $1 AND status = 'completed'`,
-          [app.referred_by]
-        );
-        const completedAppsByReferrer = parseInt(referrerAppsCount.rows[0].count);
-
-        if (completedAppsByReferrer >= 5) {
-          const referralCheck = await client.query(
-            `SELECT status FROM referrals WHERE referrer_id = $1 AND referred_id = $2 FOR UPDATE`,
-            [app.referred_by, app.user_id]
-          );
-
-          if (referralCheck.rows.length > 0 && referralCheck.rows[0].status === 'pending') {
-            const rewardAmount = 10;
-
-            // 🔥 CRITICAL FIX: COALESCE(wallet_balance, 0)
-            await client.query(
-              `UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + $1 WHERE id = $2`,
-              [rewardAmount, app.referred_by]
-            );
-
-            await client.query(
-              `UPDATE referrals SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE referrer_id = $1 AND referred_id = $2`,
-              [app.referred_by, app.user_id]
-            );
-
-            await client.query(
-              `INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'referral_bonus', 'Referral bonus for user completing 5 orders', 'completed')`,
-              [app.referred_by, rewardAmount]
-            );
-          }
-        }
-      }
     }
 
     await client.query('COMMIT');

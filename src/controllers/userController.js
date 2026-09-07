@@ -487,7 +487,7 @@ const generateReferralCode = (name) => {
 const getPublicLiveFeed = async (req, res) => {
   try {
     const earningsRes = await pool.query(`
-      SELECT u.email, (p.price + p.reward) as amount, a.updated_at as date, 'earning' as type
+      SELECT u.email, p.price as amount, a.updated_at as date, 'campaign' as type
       FROM applications a
       JOIN users u ON a.user_id = u.id
       JOIN products p ON a.product_id = p.id

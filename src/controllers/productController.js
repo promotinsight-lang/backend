@@ -3,7 +3,6 @@ const pool = require("../config/db");
 const {
   normalizeCampaignCategory,
   normalizeCampaignCategoryKey,
-  resolveBuyerRewardForCategory,
   parsePlatformChargeConditions,
   parsePlatformChargeTiers,
 } = require("../utils/campaignCategories");
@@ -90,10 +89,8 @@ const fetchFeeConfig = async (client, country, platform) => {
   return result.rows[0] || null;
 };
 
-const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, category, useConfiguredBuyerReward = false }) => {
-  const resolvedReward = useConfiguredBuyerReward
-    ? resolveBuyerRewardForCategory(feeConfig, category, reward)
-    : reward;
+const calculateCampaignDeposit = ({ price, quantity, feeConfig, category }) => {
+  const resolvedReward = 0;
   
   let commissionPerOrderLocal = 0;
   let hasFeeError = false;
@@ -126,21 +123,21 @@ const calculateCampaignDeposit = ({ price, reward, quantity, feeConfig, category
       }
   }
 
-  const rewardDepositPerOrderLocal = resolvedReward;
+  const campaignCreditPerOrderLocal = resolvedReward;
 
   // 🔥 LOCAL CURRENCY DEPOSIT
-  const requiredDepositPerOrderLocal = rewardDepositPerOrderLocal + commissionPerOrderLocal;
+  const requiredDepositPerOrderLocal = campaignCreditPerOrderLocal + commissionPerOrderLocal;
   const totalRequiredDepositLocal = requiredDepositPerOrderLocal * quantity;
 
   // 🔥 USD CONVERSION (For Wallet Deduction)
-  // Frontend submits price/reward in USD; exchangeRate is kept for display/audit context.
+  // Frontend submits price in USD; exchangeRate is kept for display/audit context.
   const exchangeRate = parseFloat(feeConfig.exchange_rate) || 1.0;
   const totalRequiredDepositUSD = totalRequiredDepositLocal;
 
   return {
     resolvedReward,
     commissionPerOrderLocal,
-    rewardDepositPerOrderLocal,
+    campaignCreditPerOrderLocal,
     totalRequiredDepositLocal,
     totalRequiredDepositUSD,
     exchangeRate,
@@ -158,7 +155,7 @@ const createProduct = async (req, res) => {
   const client = await pool.connect();
   try {
     const sellerId = req.user.id;
-    const { product_name, price, store_name, search_keyword, reward, product_link, country, required_orders, instructions, platform, category } = req.body;
+    const { product_name, price, store_name, search_keyword, product_link, country, required_orders, instructions, platform, category } = req.body;
     const safeCountry = country ? country.trim() : '';
     const safePlatform = platform ? platform.trim() : '';
     const safeCategory = normalizeCampaignCategory(category);
@@ -176,10 +173,10 @@ const createProduct = async (req, res) => {
     }
 
     const priceVal = parseAmount(price);
-    const rewardVal = parseAmount(reward);
+    const rewardVal = 0;
     const qtyVal = parseQuantity(required_orders);
 
-    if (!Number.isFinite(priceVal) || !Number.isFinite(rewardVal) || !Number.isFinite(qtyVal) || priceVal <= 0 || rewardVal < 0 || qtyVal <= 0) {
+    if (!Number.isFinite(priceVal) || !Number.isFinite(qtyVal) || priceVal <= 0 || qtyVal <= 0) {
        return res.status(400).json({ success: false, message: "Invalid pricing or quantity values" });
     }
 
@@ -203,11 +200,9 @@ const createProduct = async (req, res) => {
         commissionPerOrderLocal 
     } = calculateCampaignDeposit({
       price: priceVal,
-      reward: rewardVal,
       quantity: qtyVal,
       feeConfig,
       category: safeCategory,
-      useConfiguredBuyerReward: true,
     });
 
     if (hasFeeError) {
