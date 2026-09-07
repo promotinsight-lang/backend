@@ -35,13 +35,13 @@ const adminActionLimiter = rateLimit({
 });
 
 // ==========================
-// 💸 Withdrawal Routes (Buyer & Seller)
+// 💸 Withdrawal Routes (Seller only)
 // ==========================
 // Request a withdrawal
-router.post("/", protect, authorize("buyer", "seller"), withdrawalRequestLimiter, requestWithdrawal);
+router.post("/", protect, authorize("seller"), withdrawalRequestLimiter, requestWithdrawal);
 
 // Get my withdrawal history
-router.get("/my", protect, authorize("buyer", "seller"), getMyWithdrawals);
+router.get("/my", protect, authorize("seller"), getMyWithdrawals);
 
 // ==========================
 // 👑 Admin Routes

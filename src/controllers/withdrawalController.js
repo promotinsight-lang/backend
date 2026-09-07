@@ -20,6 +20,10 @@ const requestWithdrawal = async (req, res) => {
       return res.status(400).json({ success: false, message: "Valid amount and payment_method are required" });
     }
 
+    if (req.user.role === 'buyer') {
+      return res.status(403).json({ success: false, message: "Buyer withdrawals are currently disabled. Loan credit is available in the buyer account." });
+    }
+
     await client.query('BEGIN');
 
     // 1. Fetch Payment Method Details (Support Crypto & Fiat)

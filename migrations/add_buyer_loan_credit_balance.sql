@@ -1,0 +1,2 @@
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS loan_credit_balance NUMERIC(12, 2) NOT NULL DEFAULT 0;

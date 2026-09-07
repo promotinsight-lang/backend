@@ -5,6 +5,8 @@ const {
   normalizeCampaignCategoryKey,
 } = require("../utils/campaignCategories");
 
+const REFERRAL_REWARDS_ENABLED = false;
+
 // 🛡️ XSS Protection Utility
 const escapeHTML = (str) => {
   if (typeof str !== 'string') return str;
@@ -92,6 +94,7 @@ const creditBuyerRewardOnce = async (client, { userId, reward, applicationId }) 
 };
 
 const creditSellerReferralBonusIfEligible = async (client, sellerId) => {
+  if (!REFERRAL_REWARDS_ENABLED) return;
   if (!sellerId) return;
 
   const sellerStats = await client.query(
@@ -820,7 +823,7 @@ const confirmRefund = async (req, res) => {
     // ==========================================
     // 🎁 REFERRAL BONUS LOGIC
     // ==========================================
-    if (app.referred_by) {
+    if (REFERRAL_REWARDS_ENABLED && app.referred_by) {
       const referredUserAppsCount = await client.query(
         `SELECT COUNT(*) FROM applications WHERE user_id = $1 AND status = 'completed'`,
         [app.user_id]

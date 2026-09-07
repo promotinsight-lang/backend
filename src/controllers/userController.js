@@ -470,9 +470,10 @@ const updateSocialProviderMetadata = async (userId, provider, firebaseUid) => {
 };
 
 // 🔥 NEW: Referral Code Generator Helper
-const BUYER_REGISTRATION_BONUS_USD = 10;
-const BUYER_REFERRAL_BONUS_USD = 10;
-const SELLER_REFERRAL_BONUS_USD = 15;
+const BUYER_REGISTRATION_BONUS_USD = 0;
+const BUYER_REFERRAL_BONUS_USD = 0;
+const SELLER_REFERRAL_BONUS_USD = 0;
+const REFERRAL_REWARDS_ENABLED = false;
 
 const generateReferralCode = (name) => {
   const prefix = name ? name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X') : 'USR';
@@ -704,7 +705,7 @@ const registerUser = async (req, res) => {
 
     // 🔥 Referral Logic: Check if referred_by_code is valid
     let referredById = null;
-    if (referred_by_code) {
+    if (REFERRAL_REWARDS_ENABLED && referred_by_code) {
       const referrerRes = await pool.query("SELECT id FROM users WHERE referral_code = $1", [referred_by_code.trim()]);
       if (referrerRes.rows.length > 0) {
         referredById = referrerRes.rows[0].id;
@@ -719,7 +720,7 @@ const registerUser = async (req, res) => {
     const result = await pool.query(
       `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, geo_latitude, geo_longitude, geo_accuracy, geo_location_label, geo_source, referral_code, referred_by, wallet_balance, trust_score)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0)
-       RETURNING id, name, email, role, verification_status, wallet_balance, trust_score`,
+       RETURNING id, name, email, role, verification_status, wallet_balance, loan_credit_balance, trust_score`,
       [
         finalName,
         emailTrimmed,
@@ -749,7 +750,7 @@ const registerUser = async (req, res) => {
     }
 
     // 🔥 Insert into referrals table if user was referred
-    if (referredById) {
+    if (REFERRAL_REWARDS_ENABLED && referredById) {
       const referralRewardAmount = userRole === 'seller' ? SELLER_REFERRAL_BONUS_USD : BUYER_REFERRAL_BONUS_USD;
       await pool.query(
         `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', $3)`
@@ -782,7 +783,7 @@ const registerUser = async (req, res) => {
     res.status(201).json({ 
       success: true,
       message: "User registered successfully", 
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance } 
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance, loan_credit_balance: user.loan_credit_balance } 
     });
 
   } catch (error) {
@@ -828,7 +829,7 @@ const loginUser = async (req, res) => {
     }
 
     const result = await pool.query(
-      "SELECT id, name, email, password_hash, role, verification_status, wallet_balance FROM users WHERE email = $1",
+      "SELECT id, name, email, password_hash, role, verification_status, wallet_balance, loan_credit_balance FROM users WHERE email = $1",
       [email.trim().toLowerCase()]
     );
 
@@ -879,7 +880,7 @@ const loginUser = async (req, res) => {
     res.json({
       success: true,
       message: "Login successful",
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance, loan_credit_balance: user.loan_credit_balance },
     });
 
   } catch (error) {
@@ -951,7 +952,7 @@ const socialLogin = async (req, res) => {
     const verifiedName = decodedToken.name || decodedToken.email?.split("@")[0] || "User";
     
     const existingUser = await pool.query(
-      "SELECT id, name, email, password_hash, role, verification_status, wallet_balance FROM users WHERE email = $1",
+      "SELECT id, name, email, password_hash, role, verification_status, wallet_balance, loan_credit_balance FROM users WHERE email = $1",
       [emailTrimmed]
     );
 
@@ -992,7 +993,7 @@ if (existingUser.rows.length > 0) {
 
       // 🔥 Referral Logic for Social Login
       let referredById = null;
-      if (referred_by_code) {
+      if (REFERRAL_REWARDS_ENABLED && referred_by_code) {
         const referrerRes = await pool.query("SELECT id FROM users WHERE referral_code = $1", [referred_by_code.trim()]);
         if (referrerRes.rows.length > 0) {
           referredById = referrerRes.rows[0].id;
@@ -1008,7 +1009,7 @@ if (existingUser.rows.length > 0) {
       const newUser = await pool.query(
         `INSERT INTO users (name, email, password_hash, role, last_ip, ip_location, geo_latitude, geo_longitude, geo_accuracy, geo_location_label, geo_source, referral_code, referred_by, wallet_balance, trust_score)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 0)
-         RETURNING id, name, email, role, verification_status, wallet_balance, trust_score`,
+         RETURNING id, name, email, role, verification_status, wallet_balance, loan_credit_balance, trust_score`,
         [
           finalName,
           emailTrimmed,
@@ -1038,7 +1039,7 @@ if (existingUser.rows.length > 0) {
       }
 
       // 🔥 Insert into referrals table if user was referred
-      if (referredById) {
+      if (REFERRAL_REWARDS_ENABLED && referredById) {
         const referralRewardAmount = userRole === 'seller' ? SELLER_REFERRAL_BONUS_USD : BUYER_REFERRAL_BONUS_USD;
         await pool.query(
           `INSERT INTO referrals (referrer_id, referred_id, status, reward_amount) VALUES ($1, $2, 'pending', $3)`
@@ -1057,7 +1058,7 @@ if (existingUser.rows.length > 0) {
     res.status(200).json({
       success: true,
       message: `${provider.toUpperCase()} login successful`,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, verification_status: user.verification_status, wallet_balance: user.wallet_balance, loan_credit_balance: user.loan_credit_balance },
     });
 
   } catch (error) {
@@ -1083,7 +1084,7 @@ const getUserProfile = async (req, res) => {
 
     // 🔥 Added referral_code to selection
     const result = await pool.query(
-      `SELECT id, name, email, role, wallet_balance, created_at, 
+      `SELECT id, name, email, role, wallet_balance, loan_credit_balance, created_at, 
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
               whatsapp_account, telegram_account, is_active, is_frozen, referral_code
@@ -1397,7 +1398,7 @@ const getAllUsersByRole = async (req, res) => {
          ) stats ON true`;
 
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.wallet_balance, u.trust_score, u.user_rank,
+      `SELECT u.id, u.name, u.email, u.role, u.wallet_balance, u.loan_credit_balance, u.trust_score, u.user_rank,
               u.verification_status, u.is_active, u.is_frozen, u.created_at, u.last_ip, u.ip_location,
               u.geo_latitude, u.geo_longitude, u.geo_accuracy, u.geo_location_label, u.geo_source,
               CASE
@@ -1460,7 +1461,7 @@ const getAdminUserDetailsById = async (req, res) => {
     const userId = req.params.id;
     // 🔥 Added ip_location to selection
     const result = await pool.query(
-      `SELECT id, name, email, role, wallet_balance, created_at, 
+      `SELECT id, name, email, role, wallet_balance, loan_credit_balance, created_at, 
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
               whatsapp_account, telegram_account, verification_country, verification_platforms, verification_responses,
@@ -1606,6 +1607,39 @@ const updateTrustScore = async (req, res) => {
     res.status(200).json({ success: true, message: "Trust score updated successfully", data: result.rows[0] });
   } catch (error) {
     console.error("UPDATE TRUST SCORE ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+const updateBuyerLoanCredit = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { loan_credit_balance } = req.body;
+    const creditValue = Number(loan_credit_balance);
+
+    if (!Number.isFinite(creditValue) || creditValue < 0) {
+      return res.status(400).json({ success: false, message: "Loan credit must be a valid non-negative amount" });
+    }
+
+    const result = await pool.query(
+      `UPDATE users
+       SET loan_credit_balance = $1
+       WHERE id = $2 AND role = 'buyer'
+       RETURNING id, name, email, role, loan_credit_balance`,
+      [creditValue, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Buyer user not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Buyer loan credit updated successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error("UPDATE LOAN CREDIT ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -1830,6 +1864,7 @@ module.exports = {
   depositFunds,
   getMyDeposits,
   updateTrustScore,
+  updateBuyerLoanCredit,
   submitAppeal,
   getPendingAppeals,
   resolveAppeal,
