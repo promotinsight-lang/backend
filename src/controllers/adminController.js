@@ -9,6 +9,30 @@ const escapeHTML = (str) => {
   }[tag] || tag));
 };
 
+const isValidURL = (string) => {
+  try {
+    new URL(string);
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
+const hasEnoughPhoneDigits = (value) => String(value || '').replace(/\D/g, '').length >= 7;
+
+const getBuyerApprovalContactMessage = (user) => {
+  if (user?.role !== 'buyer') return null;
+
+  const whatsappNumber = String(user.whatsapp_account || '').trim();
+  const facebookUrl = String(user.facebook_account || '').trim();
+
+  if (!whatsappNumber) return 'Buyer approval requires a WhatsApp Number.';
+  if (!hasEnoughPhoneDigits(whatsappNumber)) return 'Buyer approval requires a valid WhatsApp Number.';
+  if (!facebookUrl) return 'Buyer approval requires a Facebook URL.';
+  if (!isValidURL(facebookUrl)) return 'Buyer approval requires a valid Facebook URL.';
+  return null;
+};
+
 // 1. Get Dashboard Stats
 const getDashboardStats = async (req, res) => {
   try {
@@ -147,6 +171,22 @@ const verifyUser = async (req, res) => {
 
     if (!['approved', 'rejected'].includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    if (status === 'approved') {
+      const existingUser = await pool.query(
+        "SELECT id, role, facebook_account, whatsapp_account FROM users WHERE id = $1",
+        [userId]
+      );
+
+      if (existingUser.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      const buyerContactMessage = getBuyerApprovalContactMessage(existingUser.rows[0]);
+      if (buyerContactMessage) {
+        return res.status(400).json({ success: false, message: buyerContactMessage });
+      }
     }
 
     const result = await pool.query(

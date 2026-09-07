@@ -8,8 +8,8 @@ const DEFAULT_PLATFORM_FIELDS = [
 
 const DEFAULT_GLOBAL_FIELDS = [
   { key: 'paypal_account', label: 'Email Address', type: 'email', required: true, placeholder: 'yourname@email.com' },
-  { key: 'whatsapp_account', label: 'WhatsApp Number', type: 'tel', required: false, placeholder: '+1 555 123 4567' },
-  { key: 'facebook_account', label: 'WeChat ID', type: 'text', required: false, placeholder: 'Enter your WeChat ID' },
+  { key: 'whatsapp_account', label: 'WhatsApp Number', type: 'tel', required: true, placeholder: '+1 555 123 4567' },
+  { key: 'facebook_account', label: 'Facebook URL', type: 'url', required: true, placeholder: 'https://www.facebook.com/your.profile' },
   { key: 'telegram_account', label: 'Telegram Username', type: 'text', required: false, placeholder: '@yourusername' },
 ];
 
@@ -50,15 +50,29 @@ const sanitizeFields = (fields) =>
     placeholder: f.placeholder ? String(f.placeholder) : '',
   }));
 
-const normalizeGlobalFields = (fields) => fields.map((field) => {
+const normalizeGlobalField = (field) => {
   if (field.key === 'paypal_account') {
     return { ...field, label: 'Email Address', type: 'email', placeholder: 'yourname@email.com' };
   }
+  if (field.key === 'whatsapp_account') {
+    return { ...field, label: 'WhatsApp Number', type: 'tel', required: true, placeholder: '+1 555 123 4567' };
+  }
   if (field.key === 'facebook_account') {
-    return { ...field, label: 'WeChat ID', type: 'text', placeholder: 'Enter your WeChat ID' };
+    return { ...field, label: 'Facebook URL', type: 'url', required: true, placeholder: 'https://www.facebook.com/your.profile' };
   }
   return field;
-});
+};
+
+const normalizeGlobalFields = (fields) => {
+  const normalized = fields.map(normalizeGlobalField);
+  const keys = new Set(normalized.map((field) => field.key));
+
+  for (const defaultField of DEFAULT_GLOBAL_FIELDS) {
+    if (!keys.has(defaultField.key)) normalized.push(normalizeGlobalField(defaultField));
+  }
+
+  return normalized;
+};
 
 const normalizePlatformFields = (fields) => fields.map((field) => (
   field.key === 'account_name'

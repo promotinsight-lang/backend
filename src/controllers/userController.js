@@ -56,6 +56,19 @@ const isValidEmail = (email) => {
   return emailRegex.test(email);
 };
 
+const hasEnoughPhoneDigits = (value) => String(value || '').replace(/\D/g, '').length >= 7;
+
+const getBuyerContactValidationMessage = ({ facebook, whatsapp }) => {
+  const facebookUrl = String(facebook || '').trim();
+  const whatsappNumber = String(whatsapp || '').trim();
+
+  if (!whatsappNumber) return 'WhatsApp Number is required for buyer approval.';
+  if (!hasEnoughPhoneDigits(whatsappNumber)) return 'WhatsApp Number must include a valid phone number.';
+  if (!facebookUrl) return 'Facebook URL is required for buyer approval.';
+  if (!isValidURL(facebookUrl)) return 'Facebook URL must be a valid URL.';
+  return null;
+};
+
 // 🔥 NEW: Block Disposable/Fake/Temporary Emails
 const DISPOSABLE_EMAIL_DOMAINS = new Set([
   "0-mail.com",
@@ -1209,9 +1222,9 @@ const submitVerification = async (req, res) => {
         const val = globalData[field.key];
         const fieldLabel = field.key === 'paypal_account'
           ? (isBuyer ? 'PayPal Email Address' : 'Email Address')
-          : field.key === 'facebook_account' ? (isBuyer ? 'Facebook ID' : 'WeChat ID') : field.label;
-        const isOptionalContactField = field.key === 'whatsapp_account';
-        if (field.required && !isOptionalContactField && (!val || !String(val).trim())) {
+          : field.key === 'facebook_account' ? (isBuyer ? 'Facebook URL' : 'WeChat ID') : field.label;
+        const isSellerOptionalContactField = isSeller && ['facebook_account', 'whatsapp_account'].includes(field.key);
+        if (field.required && !isSellerOptionalContactField && (!val || !String(val).trim())) {
           return res.status(400).json({
             success: false,
             message: `${fieldLabel} is required.`,
@@ -1280,6 +1293,12 @@ const submitVerification = async (req, res) => {
           message: isBuyer ? 'PayPal Email Address is required.' : 'Email address is required.',
         });
       }
+      if (isBuyer) {
+        const buyerContactMessage = getBuyerContactValidationMessage({ facebook, whatsapp });
+        if (buyerContactMessage) {
+          return res.status(400).json({ success: false, message: buyerContactMessage });
+        }
+      }
       if (amazonUrl && !isValidURL(amazonUrl)) {
         return res.status(400).json({ success: false, message: 'Profile URL must be a valid link.' });
       }
@@ -1297,6 +1316,13 @@ const submitVerification = async (req, res) => {
           success: false,
           message: 'Platform account info and PayPal info are required!',
         });
+      }
+
+      if (isBuyer) {
+        const buyerContactMessage = getBuyerContactValidationMessage({ facebook, whatsapp });
+        if (buyerContactMessage) {
+          return res.status(400).json({ success: false, message: buyerContactMessage });
+        }
       }
 
       if (amazonUrl && !isValidURL(amazonUrl)) {
