@@ -1649,9 +1649,9 @@ const updateBuyerLoanCredit = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE users
-       SET loan_credit_balance = $1
+       SET loan_credit_balance = $1, wallet_balance = $1
        WHERE id = $2 AND role = 'buyer'
-       RETURNING id, name, email, role, loan_credit_balance`,
+       RETURNING id, name, email, role, loan_credit_balance, wallet_balance`,
       [creditValue, userId]
     );
 
