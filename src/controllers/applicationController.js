@@ -341,6 +341,24 @@ const submitOrder = async (req, res) => {
 
     await client.query('BEGIN');
 
+    const buyerCredit = await client.query(
+      "SELECT loan_credit_balance FROM users WHERE id = $1 FOR UPDATE",
+      [userId]
+    );
+
+    if (buyerCredit.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Buyer not found" });
+    }
+
+    const currentLoanCredit = Number(buyerCredit.rows[0].loan_credit_balance || 0);
+    if (currentLoanCredit < parsedOrderTotal) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: `Insufficient loan credit. Available: $${currentLoanCredit.toFixed(2)} USD.`,
+      });
+    }
+
     const appCheck = await client.query(
       `SELECT a.id, a.status, a.product_id, p.required_orders
        FROM applications a
@@ -396,6 +414,21 @@ const submitOrder = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: "Application status changed. Please refresh and try again." });
     }
+
+    await client.query(
+      "UPDATE users SET loan_credit_balance = COALESCE(loan_credit_balance, 0) - $1 WHERE id = $2",
+      [parsedOrderTotal.toFixed(2), userId]
+    );
+
+    await client.query(
+      "INSERT INTO transactions (user_id, amount, type, description, status, reference_id) VALUES ($1, $2, 'loan_credit_order', $3, 'completed', $4)",
+      [
+        userId,
+        parsedOrderTotal.toFixed(2),
+        `Loan credit deducted for order request #${applicationId}`,
+        `loan-credit-order:${applicationId}`,
+      ]
+    );
 
     await client.query('COMMIT');
     res.status(200).json({ success: true, message: "Order submitted successfully with screenshot", data: result.rows[0] });
