@@ -27,7 +27,8 @@ const {
   getAllUsersByRole,
   updateUserStatus,
   getAdminUserDetailsById,
-  sendContactEmail // 🔥 NEW IMPORT
+  sendContactEmail, // 🔥 NEW IMPORT
+  getMyTransactions
 } = require("../controllers/userController");
 
 const { protect } = require("../middleware/authMiddleware");
@@ -113,6 +114,7 @@ router.patch("/profile/name", protect, updateUserName);
 // ==========================
 router.post("/deposit", protect, financialLimiter, depositFunds);
 router.get("/deposits", protect, getMyDeposits);
+router.get("/transactions/my", protect, getMyTransactions);
 router.get("/payment-settings", protect, getPaymentSettings);
 
 // ==========================

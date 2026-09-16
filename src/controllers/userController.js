@@ -1638,6 +1638,7 @@ const updateTrustScore = async (req, res) => {
 };
 
 const updateBuyerLoanCredit = async (req, res) => {
+  const client = await pool.connect();
   try {
     const userId = req.params.id;
     const { loan_credit_balance } = req.body;
@@ -1647,7 +1648,19 @@ const updateBuyerLoanCredit = async (req, res) => {
       return res.status(400).json({ success: false, message: "Loan credit must be a valid non-negative amount" });
     }
 
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    // Fetch current balance to calculate difference
+    const currentRes = await client.query('SELECT loan_credit_balance FROM users WHERE id = $1 AND role = $2 FOR UPDATE', [userId, 'buyer']);
+    if (currentRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: "Buyer user not found" });
+    }
+    
+    const oldBalance = Number(currentRes.rows[0].loan_credit_balance || 0);
+    const difference = creditValue - oldBalance;
+
+    const result = await client.query(
       `UPDATE users
        SET loan_credit_balance = $1, wallet_balance = $1
        WHERE id = $2 AND role = 'buyer'
@@ -1655,9 +1668,20 @@ const updateBuyerLoanCredit = async (req, res) => {
       [creditValue, userId]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Buyer user not found" });
+    // Record transaction if there is a difference
+    if (difference > 0) {
+      await client.query(
+        "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'loan_received', $3, 'completed')",
+        [userId, difference, 'Admin added loan credit']
+      );
+    } else if (difference < 0) {
+      await client.query(
+        "INSERT INTO transactions (user_id, amount, type, description, status) VALUES ($1, $2, 'loan_deducted', $3, 'completed')",
+        [userId, Math.abs(difference), 'Admin deducted loan credit']
+      );
     }
+
+    await client.query('COMMIT');
 
     res.status(200).json({
       success: true,
@@ -1665,8 +1689,11 @@ const updateBuyerLoanCredit = async (req, res) => {
       data: result.rows[0],
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error("UPDATE LOAN CREDIT ERROR:", error);
     res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    client.release();
   }
 };
 
@@ -1875,6 +1902,20 @@ const sendContactEmail = async (req, res) => {
   }
 };
 
+const getMyTransactions = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const result = await pool.query(
+      "SELECT * FROM transactions WHERE user_id = $1 ORDER BY created_at DESC",
+      [userId]
+    );
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error("GET MY TRANSACTIONS ERROR:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 module.exports = {
   getPublicLiveFeed,      
   getPublicUserStats,
@@ -1900,5 +1941,6 @@ module.exports = {
   getAllUsersByRole,
   updateUserStatus,
   getAdminUserDetailsById,
-  sendContactEmail // 🔥 EXPORTED NEW FUNCTION
+  sendContactEmail, // 🔥 EXPORTED NEW FUNCTION
+  getMyTransactions
 };

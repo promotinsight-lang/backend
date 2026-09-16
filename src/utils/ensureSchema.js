@@ -2,6 +2,283 @@ const pool = require("../config/db");
 
 const ensureSchema = async () => {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL UNIQUE,
+      password_hash TEXT,
+      role VARCHAR(50) NOT NULL DEFAULT 'buyer',
+      verification_status VARCHAR(50) NOT NULL DEFAULT 'unverified',
+      wallet_balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      loan_credit_balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      trust_score NUMERIC(3, 1) NOT NULL DEFAULT 0,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      is_frozen BOOLEAN NOT NULL DEFAULT false,
+      auth_provider VARCHAR(50),
+      firebase_uid TEXT,
+      last_ip TEXT,
+      ip_location TEXT,
+      location_label TEXT,
+      referral_code VARCHAR(100) UNIQUE,
+      referred_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      completed_orders INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS products (
+      id SERIAL PRIMARY KEY,
+      image_url TEXT,
+      product_name TEXT NOT NULL,
+      price NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      store_name TEXT,
+      search_keyword TEXT,
+      reward NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      product_link TEXT,
+      country VARCHAR(100),
+      required_orders INTEGER NOT NULL DEFAULT 1,
+      instructions TEXT,
+      seller_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      platform VARCHAR(100),
+      category VARCHAR(100),
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      total_deposit NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      platform_fee_charged NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS applications (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      order_number TEXT,
+      order_total_amount NUMERIC(12, 2),
+      order_paypal_address TEXT,
+      order_submitted_at TIMESTAMP,
+      order_comment TEXT,
+      screenshot_url TEXT,
+      screenshot_url_2 TEXT,
+      review_link TEXT,
+      review_screenshot_url TEXT,
+      review_screenshot_url_2 TEXT,
+      review_submitted_at TIMESTAMP,
+      refund_screenshot_url TEXT,
+      refund_order_number TEXT,
+      refund_comment TEXT,
+      seller_payment_transaction_id TEXT,
+      seller_payment_screenshot_url TEXT,
+      seller_payment_note TEXT,
+      seller_paid_at TIMESTAMP,
+      ip_address TEXT,
+      ip_location TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, product_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      type VARCHAR(100) NOT NULL,
+      description TEXT,
+      status VARCHAR(50) NOT NULL DEFAULT 'completed',
+      reference_id VARCHAR(255),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS deposits (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      payment_method TEXT,
+      transaction_id TEXT,
+      screenshot_url TEXT,
+      account_details TEXT,
+      crypto_address TEXT,
+      crypto_network TEXT,
+      crypto_memo TEXT,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS withdrawals (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      payment_method TEXT,
+      account_details TEXT,
+      crypto_address TEXT,
+      crypto_network TEXT,
+      crypto_memo TEXT,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      transaction_id TEXT,
+      screenshot_url TEXT,
+      transaction_reference TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dynamic_fees_config (
+      id SERIAL PRIMARY KEY,
+      country VARCHAR(100) NOT NULL,
+      platform VARCHAR(100) NOT NULL,
+      exchange_rate NUMERIC(12, 4) NOT NULL DEFAULT 1,
+      buyer_reward NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      seller_withdrawal_fee NUMERIC(6, 4) NOT NULL DEFAULT 0,
+      platform_charge_type VARCHAR(50) DEFAULT 'fixed',
+      platform_charge_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      platform_charge_percentage NUMERIC(6, 4) NOT NULL DEFAULT 0,
+      platform_charge_conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+      buyer_reward_conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+      verification_fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(country, platform)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS referrals (
+      id SERIAL PRIMARY KEY,
+      referrer_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      referred_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      reward_amount NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS appeals (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      application_id INTEGER REFERENCES applications(id) ON DELETE SET NULL,
+      appeal_type VARCHAR(100),
+      reason TEXT NOT NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      admin_response TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS support_tickets (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      subject TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'open',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ticket_replies (
+      id SERIAL PRIMARY KEY,
+      ticket_id INTEGER REFERENCES support_tickets(id) ON DELETE CASCADE,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS announcements (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS private_chat_requests (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS private_chat_sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      admin_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'active',
+      ended_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS private_chat_messages (
+      id SERIAL PRIMARY KEY,
+      session_id INTEGER REFERENCES private_chat_sessions(id) ON DELETE CASCADE,
+      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      message TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_methods (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(100) NOT NULL UNIQUE,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_method_networks (
+      id SERIAL PRIMARY KEY,
+      payment_method_id INTEGER REFERENCES payment_methods(id) ON DELETE CASCADE,
+      network_name VARCHAR(100) NOT NULL,
+      fee_type VARCHAR(50),
+      fee_amount NUMERIC(12, 2) DEFAULT 0,
+      fee_percentage NUMERIC(6, 4) DEFAULT 0,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_settings (
+      id SERIAL PRIMARY KEY,
+      method_name VARCHAR(100) NOT NULL,
+      account_details TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS user_rank VARCHAR(100) DEFAULT 'New User',
       ADD COLUMN IF NOT EXISTS amazon_location TEXT,

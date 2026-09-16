@@ -360,7 +360,8 @@ const submitOrder = async (req, res) => {
     }
 
     const appCheck = await client.query(
-      `SELECT a.id, a.status, a.product_id, p.required_orders
+      `SELECT a.id, a.status, a.product_id, p.required_orders,
+              p.product_name, p.store_name, p.platform, p.country
        FROM applications a
        JOIN products p ON a.product_id = p.id
        WHERE a.id = $1 AND a.user_id = $2
@@ -416,16 +417,24 @@ const submitOrder = async (req, res) => {
     }
 
     await client.query(
-      "UPDATE users SET loan_credit_balance = COALESCE(loan_credit_balance, 0) - $1 WHERE id = $2",
+      `UPDATE users
+       SET loan_credit_balance = COALESCE(loan_credit_balance, 0) - $1,
+           wallet_balance = GREATEST(COALESCE(loan_credit_balance, 0) - $1, 0)
+       WHERE id = $2`,
       [parsedOrderTotal.toFixed(2), userId]
     );
+
+    const spendLocation = [
+      app.store_name || app.product_name || `Application #${applicationId}`,
+      [app.platform, app.country].filter(Boolean).join(' ')
+    ].filter(Boolean).join(' - ');
 
     await client.query(
       "INSERT INTO transactions (user_id, amount, type, description, status, reference_id) VALUES ($1, $2, 'loan_credit_order', $3, 'completed', $4)",
       [
         userId,
         parsedOrderTotal.toFixed(2),
-        `Loan credit deducted for order request #${applicationId}`,
+        `Spent at ${spendLocation} for order #${applicationId}`,
         `loan-credit-order:${applicationId}`,
       ]
     );
@@ -679,7 +688,7 @@ const confirmRefund = async (req, res) => {
 
     // Fetch Application & Product details
     const appResult = await client.query(
-      `SELECT a.user_id, a.status, p.price, p.reward, p.category, p.country, p.platform, p.seller_id, u.referred_by
+      `SELECT a.user_id, a.status, a.order_total_amount, p.price, p.reward, p.category, p.country, p.platform, p.seller_id, u.referred_by
        FROM applications a
        JOIN products p ON a.product_id = p.id
        JOIN users u ON a.user_id = u.id
@@ -711,8 +720,16 @@ const confirmRefund = async (req, res) => {
     }
 
     // 🔥 NaN এরর ঠেকানোর জন্য Safe Parsing
-    const safePrice = parseFloat(app.price) || 0;
-    const totalGrossAmount = safePrice;
+    const safeOrderTotal = parseFloat(app.order_total_amount) || 0;
+    const totalGrossAmount = safeOrderTotal;
+
+    if (normalizeCampaignCategoryKey(app.category) !== 'pre_pay' && totalGrossAmount <= 0) {
+       await client.query('ROLLBACK');
+       return res.status(400).json({
+         success: false,
+         message: "Order total amount is required before refund confirmation."
+       });
+    }
     
     let finalRefundAmount = totalGrossAmount;
     let refundFeeAmount = 0;
