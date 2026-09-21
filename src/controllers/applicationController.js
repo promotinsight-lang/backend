@@ -542,9 +542,9 @@ const approveOrder = async (req, res) => {
 
     await client.query(
       `UPDATE users
-       SET loan_credit_balance = COALESCE(loan_credit_balance, 0) + $1,
-           wallet_balance = COALESCE(wallet_balance, 0) + $1
-       WHERE id = $2`,
+       SET loan_credit_balance = COALESCE(loan_credit_balance, 0) + $1::numeric,
+           wallet_balance = COALESCE(wallet_balance, 0) + $1::numeric
+       WHERE id = $2::integer`,
       [proofAmount.toFixed(2), app.user_id]
     );
 
@@ -555,8 +555,8 @@ const approveOrder = async (req, res) => {
 
     await client.query(
       `INSERT INTO transactions (user_id, amount, type, description, status, reference_id)
-       SELECT $1, $2, 'loan_received', $3, 'completed', $4
-       WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE reference_id = $4)`,
+       SELECT $1::integer, $2::numeric, 'loan_received', $3::text, 'completed', $4::varchar(255)
+       WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE reference_id = $4::varchar(255))`,
       [
         app.user_id,
         proofAmount.toFixed(2),
@@ -568,12 +568,12 @@ const approveOrder = async (req, res) => {
     const result = await client.query(
       `UPDATE applications
        SET status = 'order_approved',
-           loan_payment_transaction_id = $1,
-           loan_payment_screenshot_url = $2,
-           loan_payment_amount = $3,
-           loan_payment_note = $4,
+           loan_payment_transaction_id = $1::text,
+           loan_payment_screenshot_url = $2::text,
+           loan_payment_amount = $3::numeric,
+           loan_payment_note = $4::text,
            loan_paid_at = NOW()
-       WHERE id = $5
+       WHERE id = $5::integer
        RETURNING *`,
       [
         escapeHTML(transaction_id.trim()),
