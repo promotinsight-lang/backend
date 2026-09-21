@@ -13,6 +13,17 @@ const escapeHTML = (str) => {
   }[tag] || tag));
 };
 
+const ensureLoanPaymentProofColumns = async (db) => {
+  await db.query(`
+    ALTER TABLE applications
+      ADD COLUMN IF NOT EXISTS loan_payment_transaction_id TEXT,
+      ADD COLUMN IF NOT EXISTS loan_payment_screenshot_url TEXT,
+      ADD COLUMN IF NOT EXISTS loan_payment_amount NUMERIC(12, 2),
+      ADD COLUMN IF NOT EXISTS loan_payment_note TEXT,
+      ADD COLUMN IF NOT EXISTS loan_paid_at TIMESTAMP
+  `);
+};
+
 // 🔥 IP Tracking Helper
 const normalizeClientIp = (ip) => {
   if (!ip) return "Unknown";
@@ -295,6 +306,7 @@ const deleteApplicationAdmin = async (req, res) => {
 // =======================
 const getApplicationsByProduct = async (req, res) => {
   try {
+    await ensureLoanPaymentProofColumns(pool);
     const productId = req.params.id;
     const userRole = req.user.role;
     const userId = req.user.id;
@@ -330,6 +342,7 @@ const getApplicationsByProduct = async (req, res) => {
 // ==========================================
 const getMyApplications = async (req, res) => {
   try {
+    await ensureLoanPaymentProofColumns(pool);
     const userId = req.user.id;
     const result = await pool.query(
       `SELECT 
@@ -502,6 +515,7 @@ const approveOrder = async (req, res) => {
       return res.status(400).json({ success: false, message: "Valid total amount is required before loan approval." });
     }
 
+    await ensureLoanPaymentProofColumns(client);
     await client.query('BEGIN');
 
     const appResult = await client.query(
@@ -580,7 +594,11 @@ const approveOrder = async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("LOAN APPROVAL ERROR:", error);
-    return res.status(500).json({ success: false, message: "Server error" });
+    const detail = [error.code, error.message].filter(Boolean).join(": ");
+    return res.status(500).json({
+      success: false,
+      message: detail ? `Loan approval failed: ${detail}` : "Loan approval failed. Please check server logs.",
+    });
   } finally {
     client.release();
   }
@@ -902,6 +920,7 @@ const confirmRefund = async (req, res) => {
 // ==========================================
 const getSellerProductReviews = async (req, res) => {
   try {
+    await ensureLoanPaymentProofColumns(pool);
     const sellerId = req.user.id;
     const productId = req.params.id;
 
@@ -934,6 +953,7 @@ const getSellerProductReviews = async (req, res) => {
 // ==========================================
 const getAllApplicationsAdmin = async (req, res) => {
   try {
+    await ensureLoanPaymentProofColumns(pool);
     const result = await pool.query(`
       SELECT a.id, a.user_id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment,
              a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.review_submitted_at, a.created_at, a.ip_address, a.ip_location,

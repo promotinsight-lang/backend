@@ -10,6 +10,17 @@ const net = require("net");
 const firebaseAdmin = require("../config/firebaseAdmin");
 const { getBuyerWalletBreakdown } = require("../utils/buyerWalletBreakdown");
 
+const ensureLoanPaymentProofColumns = async () => {
+  await pool.query(`
+    ALTER TABLE applications
+      ADD COLUMN IF NOT EXISTS loan_payment_transaction_id TEXT,
+      ADD COLUMN IF NOT EXISTS loan_payment_screenshot_url TEXT,
+      ADD COLUMN IF NOT EXISTS loan_payment_amount NUMERIC(12, 2),
+      ADD COLUMN IF NOT EXISTS loan_payment_note TEXT,
+      ADD COLUMN IF NOT EXISTS loan_paid_at TIMESTAMP
+  `);
+};
+
 // ==========================================
 // 🛡️ Security Helpers & In-Memory Cache
 // ==========================================
@@ -1934,6 +1945,7 @@ const sendContactEmail = async (req, res) => {
 
 const getMyTransactions = async (req, res) => {
   try {
+    await ensureLoanPaymentProofColumns();
     const userId = req.user.id;
     const result = await pool.query(
       `SELECT t.*,
