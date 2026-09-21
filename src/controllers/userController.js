@@ -1097,7 +1097,8 @@ const getUserProfile = async (req, res) => {
 
     // 🔥 Added referral_code to selection
     const result = await pool.query(
-      `SELECT id, name, email, role, wallet_balance, loan_credit_balance, created_at, 
+      `SELECT id, name, email, role, wallet_balance, loan_credit_balance,
+              loan_credit_limit, product_purchase_limit, product_price_limit, created_at, 
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
               whatsapp_account, telegram_account, is_active, is_frozen, referral_code
@@ -1424,7 +1425,9 @@ const getAllUsersByRole = async (req, res) => {
          ) stats ON true`;
 
     const result = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.wallet_balance, u.loan_credit_balance, u.trust_score, u.user_rank,
+      `SELECT u.id, u.name, u.email, u.role, u.wallet_balance, u.loan_credit_balance,
+              u.loan_credit_limit, u.product_purchase_limit, u.product_price_limit,
+              u.trust_score, u.user_rank,
               u.verification_status, u.is_active, u.is_frozen, u.created_at, u.last_ip, u.ip_location,
               u.geo_latitude, u.geo_longitude, u.geo_accuracy, u.geo_location_label, u.geo_source,
               CASE
@@ -1487,7 +1490,8 @@ const getAdminUserDetailsById = async (req, res) => {
     const userId = req.params.id;
     // 🔥 Added ip_location to selection
     const result = await pool.query(
-      `SELECT id, name, email, role, wallet_balance, loan_credit_balance, created_at, 
+      `SELECT id, name, email, role, wallet_balance, loan_credit_balance,
+              loan_credit_limit, product_purchase_limit, product_price_limit, created_at, 
               verification_status, amazon_location, amazon_account, 
               amazon_profile_url, paypal_account, facebook_account, 
               whatsapp_account, telegram_account, verification_country, verification_platforms, verification_responses,
@@ -1641,11 +1645,32 @@ const updateBuyerLoanCredit = async (req, res) => {
   const client = await pool.connect();
   try {
     const userId = req.params.id;
-    const { loan_credit_balance } = req.body;
+    const { loan_credit_balance, loan_credit_limit, product_purchase_limit, product_price_limit } = req.body;
     const creditValue = Number(loan_credit_balance);
+    const creditLimitValue = loan_credit_limit === undefined || loan_credit_limit === null || loan_credit_limit === ''
+      ? creditValue
+      : Number(loan_credit_limit);
+    const purchaseLimitValue = product_purchase_limit === undefined || product_purchase_limit === null || product_purchase_limit === ''
+      ? 3
+      : Number(product_purchase_limit);
+    const productPriceLimitValue = product_price_limit === undefined || product_price_limit === null || product_price_limit === ''
+      ? 50
+      : Number(product_price_limit);
 
     if (!Number.isFinite(creditValue) || creditValue < 0) {
       return res.status(400).json({ success: false, message: "Loan credit must be a valid non-negative amount" });
+    }
+
+    if (!Number.isFinite(creditLimitValue) || creditLimitValue < 0) {
+      return res.status(400).json({ success: false, message: "Loan credit limit must be a valid non-negative amount" });
+    }
+
+    if (!Number.isInteger(purchaseLimitValue) || purchaseLimitValue < 1 || purchaseLimitValue > 20) {
+      return res.status(400).json({ success: false, message: "Product purchase limit must be a whole number between 1 and 20" });
+    }
+
+    if (!Number.isFinite(productPriceLimitValue) || productPriceLimitValue <= 0) {
+      return res.status(400).json({ success: false, message: "Product price limit must be a valid positive amount" });
     }
 
     await client.query('BEGIN');
@@ -1662,10 +1687,15 @@ const updateBuyerLoanCredit = async (req, res) => {
 
     const result = await client.query(
       `UPDATE users
-       SET loan_credit_balance = $1, wallet_balance = $1
-       WHERE id = $2 AND role = 'buyer'
-       RETURNING id, name, email, role, loan_credit_balance, wallet_balance`,
-      [creditValue, userId]
+       SET loan_credit_balance = $1,
+           wallet_balance = $1,
+           loan_credit_limit = $2,
+           product_purchase_limit = $3,
+           product_price_limit = $4
+       WHERE id = $5 AND role = 'buyer'
+       RETURNING id, name, email, role, loan_credit_balance, wallet_balance,
+                 loan_credit_limit, product_purchase_limit, product_price_limit`,
+      [creditValue, creditLimitValue, purchaseLimitValue, productPriceLimitValue, userId]
     );
 
     // Record transaction if there is a difference

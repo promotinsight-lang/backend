@@ -125,7 +125,13 @@ const applyToProduct = async (req, res) => {
 
     await client.query('BEGIN');
 
-    const userCheck = await client.query("SELECT is_active, is_frozen, amazon_location FROM users WHERE id = $1 FOR UPDATE", [user_id]);
+    const userCheck = await client.query(
+      `SELECT is_active, is_frozen, amazon_location,
+              COALESCE(product_purchase_limit, 3) AS product_purchase_limit,
+              COALESCE(product_price_limit, 50) AS product_price_limit
+       FROM users WHERE id = $1 FOR UPDATE`,
+      [user_id]
+    );
     if (userCheck.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "User not found" });
@@ -150,7 +156,7 @@ const applyToProduct = async (req, res) => {
     }
 
    const productResult = await client.query(
-      "SELECT id, status, required_orders, country FROM products WHERE id = $1 FOR UPDATE",
+      "SELECT id, status, required_orders, country, price FROM products WHERE id = $1 FOR UPDATE",
       [productId]
     );
 
@@ -175,6 +181,41 @@ const applyToProduct = async (req, res) => {
       return res.status(400).json({ message: "This product is not available for new applications" });
     }
 
+    const existing = await client.query(
+      "SELECT id FROM applications WHERE user_id = $1 AND product_id = $2",
+      [user_id, productId]
+    );
+
+    if (existing.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "This product is already in your cart. Please go to My Orders." });
+    }
+
+    const productPrice = Number(product.price || 0);
+    const productPriceLimit = Number(user.product_price_limit || 50);
+    if (productPriceLimit > 0 && productPrice > productPriceLimit) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: `This product price is above your allowed product price limit ($${productPriceLimit.toFixed(2)}).`
+      });
+    }
+
+    const purchaseLimit = Math.max(0, parseInt(user.product_purchase_limit, 10) || 0);
+    const activeCartCount = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM applications
+       WHERE user_id = $1
+         AND status NOT IN ('completed', 'rejected', 'disputed')`,
+      [user_id]
+    );
+    const currentCartItems = parseInt(activeCartCount.rows[0].count, 10) || 0;
+    if (purchaseLimit > 0 && currentCartItems >= purchaseLimit) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: `Your product purchase limit is ${purchaseLimit}. Complete or clear an existing item before adding another product.`
+      });
+    }
+
     const submittedOrderCount = await client.query(
       `SELECT COUNT(*)::int AS count
        FROM applications
@@ -191,23 +232,13 @@ const applyToProduct = async (req, res) => {
       return res.status(400).json({ message: "This product is sold out" });
     }
 
-    const existing = await client.query(
-      "SELECT id FROM applications WHERE user_id = $1 AND product_id = $2",
-      [user_id, productId]
-    );
-
-    if (existing.rows.length > 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ message: "Already applied Please go to My Orders" });
-    }
-
     const result = await client.query(
       `INSERT INTO applications (user_id, product_id, status, ip_address, ip_location) VALUES ($1, $2, 'approved', $3, $4) RETURNING *`,
       [user_id, productId, ipAddress, ipLocation]
     );
 
     await client.query('COMMIT');
-    res.status(201).json({ message: "Order is ready. Please submit your order details.", application: result.rows[0] });
+    res.status(201).json({ message: "Product added to cart. Submit the order total screenshot from your dashboard to apply for loan credit.", application: result.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error("APPLY ERROR:", error);
@@ -339,10 +370,15 @@ const submitOrder = async (req, res) => {
       return res.status(400).json({ message: "PayPal email is required" });
     }
 
+    if (!screenshot_url || !screenshot_url.trim()) {
+      return res.status(400).json({ message: "Order total amount screenshot is required" });
+    }
+
     await client.query('BEGIN');
 
     const buyerCredit = await client.query(
-      "SELECT loan_credit_balance FROM users WHERE id = $1 FOR UPDATE",
+      `SELECT loan_credit_balance, COALESCE(loan_credit_limit, loan_credit_balance, 0) AS loan_credit_limit
+       FROM users WHERE id = $1 FOR UPDATE`,
       [userId]
     );
 
@@ -352,6 +388,14 @@ const submitOrder = async (req, res) => {
     }
 
     const currentLoanCredit = Number(buyerCredit.rows[0].loan_credit_balance || 0);
+    const loanCreditLimit = Number(buyerCredit.rows[0].loan_credit_limit || 0);
+    if (loanCreditLimit > 0 && parsedOrderTotal > loanCreditLimit) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        message: `Order total exceeds your loan credit limit. Limit: $${loanCreditLimit.toFixed(2)} USD.`,
+      });
+    }
+
     if (currentLoanCredit < parsedOrderTotal) {
       await client.query('ROLLBACK');
       return res.status(400).json({
