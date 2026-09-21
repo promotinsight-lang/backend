@@ -314,6 +314,7 @@ const getApplicationsByProduct = async (req, res) => {
       `SELECT a.id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment, 
               a.review_submitted_at,
               a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at, a.ip_address, a.ip_location,
+              a.loan_payment_transaction_id, a.loan_payment_screenshot_url, a.loan_payment_amount, a.loan_payment_note, a.loan_paid_at,
               u.name, u.email 
        FROM applications a JOIN users u ON a.user_id = u.id WHERE a.product_id = $1 ORDER BY a.created_at DESC`,
       [productId]
@@ -335,6 +336,7 @@ const getMyApplications = async (req, res) => {
          a.id AS application_id, a.status AS application_status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment,
          a.review_submitted_at,
          a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.refund_screenshot_url, a.refund_comment, a.created_at AS applied_on,
+         a.loan_payment_transaction_id, a.loan_payment_screenshot_url, a.loan_payment_amount, a.loan_payment_note, a.loan_paid_at,
          a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
          p.id AS product_id, p.product_name, p.image_url, p.price, p.reward, p.country, p.platform, p.store_name, p.search_keyword, p.instructions, p.product_link, p.category
        FROM applications a JOIN products p ON a.product_id = p.id
@@ -479,12 +481,26 @@ const forwardOrderToSeller = async (req, res) => {
 };
 
 // ==========================================
-// 👑 Approve Order (Admin)
+// Admin loan approval with payment proof
 // ==========================================
 const approveOrder = async (req, res) => {
   const client = await pool.connect();
   try {
     const applicationId = req.params.id;
+    const { transaction_id, screenshot_url, total_amount, amount, note } = req.body || {};
+    const proofAmount = Number(total_amount ?? amount);
+
+    if (!transaction_id || !transaction_id.trim()) {
+      return res.status(400).json({ success: false, message: "Transaction ID is required before loan approval." });
+    }
+
+    if (!screenshot_url || !screenshot_url.trim()) {
+      return res.status(400).json({ success: false, message: "Payment screenshot is required before loan approval." });
+    }
+
+    if (!Number.isFinite(proofAmount) || proofAmount <= 0) {
+      return res.status(400).json({ success: false, message: "Valid total amount is required before loan approval." });
+    }
 
     await client.query('BEGIN');
 
@@ -510,25 +526,12 @@ const approveOrder = async (req, res) => {
       return res.status(400).json({ success: false, message: "Valid order total amount is required before loan approval." });
     }
 
-    const userResult = await client.query(
-      "SELECT loan_credit_balance FROM users WHERE id = $1 FOR UPDATE",
-      [app.user_id]
-    );
-    const currentLoanCredit = Number(userResult.rows[0]?.loan_credit_balance || 0);
-    if (currentLoanCredit < loanAmount) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({
-        success: false,
-        message: `Insufficient buyer loan credit. Available: $${currentLoanCredit.toFixed(2)} USD.`,
-      });
-    }
-
     await client.query(
       `UPDATE users
-       SET loan_credit_balance = COALESCE(loan_credit_balance, 0) - $1,
-           wallet_balance = GREATEST(COALESCE(loan_credit_balance, 0) - $1, 0)
+       SET loan_credit_balance = COALESCE(loan_credit_balance, 0) + $1,
+           wallet_balance = COALESCE(wallet_balance, 0) + $1
        WHERE id = $2`,
-      [loanAmount.toFixed(2), app.user_id]
+      [proofAmount.toFixed(2), app.user_id]
     );
 
     const spendLocation = [
@@ -538,19 +541,33 @@ const approveOrder = async (req, res) => {
 
     await client.query(
       `INSERT INTO transactions (user_id, amount, type, description, status, reference_id)
-       SELECT $1, $2, 'loan_credit_order', $3, 'completed', $4
+       SELECT $1, $2, 'loan_received', $3, 'completed', $4
        WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE reference_id = $4)`,
       [
         app.user_id,
-        loanAmount.toFixed(2),
-        `Loan approved for ${spendLocation}. Order total: $${loanAmount.toFixed(2)}`,
-        `loan-credit-order:${applicationId}`,
+        proofAmount.toFixed(2),
+        `Loan credit approved for ${spendLocation}. Order total: $${loanAmount.toFixed(2)}. Paid amount: $${proofAmount.toFixed(2)}`,
+        `loan-approval:${applicationId}`,
       ]
     );
 
     const result = await client.query(
-      "UPDATE applications SET status = 'order_approved' WHERE id = $1 RETURNING *",
-      [applicationId]
+      `UPDATE applications
+       SET status = 'order_approved',
+           loan_payment_transaction_id = $1,
+           loan_payment_screenshot_url = $2,
+           loan_payment_amount = $3,
+           loan_payment_note = $4,
+           loan_paid_at = NOW()
+       WHERE id = $5
+       RETURNING *`,
+      [
+        escapeHTML(transaction_id.trim()),
+        escapeHTML(screenshot_url.trim()),
+        proofAmount.toFixed(2),
+        note ? escapeHTML(note.trim()) : null,
+        applicationId,
+      ]
     );
 
     await client.query('COMMIT');
@@ -895,6 +912,7 @@ const getSellerProductReviews = async (req, res) => {
       `SELECT a.id AS application_id, a.status, a.order_number, a.screenshot_url, a.screenshot_url_2,
               a.review_screenshot_url, a.review_screenshot_url_2, a.review_link, a.review_submitted_at, a.refund_comment, a.created_at, a.order_submitted_at,
               a.order_total_amount, a.order_paypal_address,
+              a.loan_payment_transaction_id, a.loan_payment_screenshot_url, a.loan_payment_amount, a.loan_payment_note, a.loan_paid_at,
               a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
               u.name AS buyer_name, u.amazon_profile_url AS profile_link, u.trust_score,
               u.paypal_account
@@ -919,6 +937,7 @@ const getAllApplicationsAdmin = async (req, res) => {
     const result = await pool.query(`
       SELECT a.id, a.user_id, a.status, a.order_number, a.order_total_amount, a.order_paypal_address, a.order_submitted_at, a.screenshot_url, a.screenshot_url_2, a.order_comment,
              a.review_link, a.review_screenshot_url, a.review_screenshot_url_2, a.review_submitted_at, a.created_at, a.ip_address, a.ip_location,
+             a.loan_payment_transaction_id, a.loan_payment_screenshot_url, a.loan_payment_amount, a.loan_payment_note, a.loan_paid_at,
              a.seller_payment_transaction_id, a.seller_payment_screenshot_url, a.seller_payment_note, a.seller_paid_at,
              p.product_name, p.image_url, p.price, p.reward,
              p.platform, p.country, p.store_name, p.search_keyword, p.instructions, p.product_link, p.seller_id, p.category,

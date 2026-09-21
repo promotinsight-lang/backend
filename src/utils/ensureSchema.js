@@ -78,6 +78,11 @@ const ensureSchema = async () => {
       seller_payment_screenshot_url TEXT,
       seller_payment_note TEXT,
       seller_paid_at TIMESTAMP,
+      loan_payment_transaction_id TEXT,
+      loan_payment_screenshot_url TEXT,
+      loan_payment_amount NUMERIC(12, 2),
+      loan_payment_note TEXT,
+      loan_paid_at TIMESTAMP,
       ip_address TEXT,
       ip_location TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -314,7 +319,12 @@ const ensureSchema = async () => {
       ADD COLUMN IF NOT EXISTS seller_payment_transaction_id TEXT,
       ADD COLUMN IF NOT EXISTS seller_payment_screenshot_url TEXT,
       ADD COLUMN IF NOT EXISTS seller_payment_note TEXT,
-      ADD COLUMN IF NOT EXISTS seller_paid_at TIMESTAMP
+      ADD COLUMN IF NOT EXISTS seller_paid_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS loan_payment_transaction_id TEXT,
+      ADD COLUMN IF NOT EXISTS loan_payment_screenshot_url TEXT,
+      ADD COLUMN IF NOT EXISTS loan_payment_amount NUMERIC(12, 2),
+      ADD COLUMN IF NOT EXISTS loan_payment_note TEXT,
+      ADD COLUMN IF NOT EXISTS loan_paid_at TIMESTAMP
   `);
 
   await pool.query(`

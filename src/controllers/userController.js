@@ -1940,9 +1940,17 @@ const getMyTransactions = async (req, res) => {
               a.order_total_amount,
               a.screenshot_url AS order_screenshot_url,
               a.screenshot_url_2 AS order_extra_screenshot_url,
-              a.order_submitted_at AS loan_applied_at
+              a.order_submitted_at AS loan_applied_at,
+              a.loan_payment_transaction_id,
+              a.loan_payment_screenshot_url,
+              a.loan_payment_amount,
+              a.loan_payment_note,
+              a.loan_paid_at
        FROM transactions t
-       LEFT JOIN applications a ON t.reference_id = CONCAT('loan-credit-order:', a.id)
+       LEFT JOIN applications a ON t.reference_id IN (
+         CONCAT('loan-credit-order:', a.id),
+         CONCAT('loan-approval:', a.id)
+       )
        WHERE t.user_id = $1
        ORDER BY t.created_at DESC`,
       [userId]
