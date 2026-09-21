@@ -1,0 +1,23 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy frontend and backend on DigitalOcean
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          port: ${{ secrets.DO_PORT || '22' }}
+          script_stop: true
+          script: |
+            set -Eeuo pipefail
+            cd /var/www/backend
+            git pull origin main
+            chmod +x scripts/deploy-production.sh
+            ./scripts/deploy-production.sh
