@@ -357,10 +357,6 @@ const submitOrder = async (req, res) => {
     const { order_number, order_total_amount, order_paypal_address, screenshot_url, screenshot_url_2, order_comment } = req.body;
     const userId = req.user.id;
 
-    if (!order_number || order_number.trim() === '') {
-      return res.status(400).json({ message: "Order number is required" });
-    }
-
     const parsedOrderTotal = Number(order_total_amount);
     if (!Number.isFinite(parsedOrderTotal) || parsedOrderTotal <= 0) {
       return res.status(400).json({ message: "Order total amount is required" });
@@ -444,7 +440,7 @@ const submitOrder = async (req, res) => {
        WHERE id = $7 AND user_id = $8 AND status IN ('approved', 'pending')
        RETURNING *`,
       [
-        escapeHTML(order_number.trim()),
+        order_number && order_number.trim() ? escapeHTML(order_number.trim()) : null,
         parsedOrderTotal.toFixed(2),
         escapeHTML(order_paypal_address.trim()),
         screenshot_url ? escapeHTML(screenshot_url.trim()) : null,
