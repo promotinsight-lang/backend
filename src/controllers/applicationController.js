@@ -348,7 +348,7 @@ const getMyApplications = async (req, res) => {
 };
 
 // ==========================================
-// 🛒 Submit Order Number (Buyer)
+// Buyer loan application with order total screenshot
 // ==========================================
 const submitOrder = async (req, res) => {
   const client = await pool.connect();
@@ -456,31 +456,8 @@ const submitOrder = async (req, res) => {
       return res.status(400).json({ message: "Application status changed. Please refresh and try again." });
     }
 
-    await client.query(
-      `UPDATE users
-       SET loan_credit_balance = COALESCE(loan_credit_balance, 0) - $1,
-           wallet_balance = GREATEST(COALESCE(loan_credit_balance, 0) - $1, 0)
-       WHERE id = $2`,
-      [parsedOrderTotal.toFixed(2), userId]
-    );
-
-    const spendLocation = [
-      app.store_name || app.product_name || `Application #${applicationId}`,
-      [app.platform, app.country].filter(Boolean).join(' ')
-    ].filter(Boolean).join(' - ');
-
-    await client.query(
-      "INSERT INTO transactions (user_id, amount, type, description, status, reference_id) VALUES ($1, $2, 'loan_credit_order', $3, 'completed', $4)",
-      [
-        userId,
-        parsedOrderTotal.toFixed(2),
-        `Spent at ${spendLocation} for order #${applicationId}`,
-        `loan-credit-order:${applicationId}`,
-      ]
-    );
-
     await client.query('COMMIT');
-    res.status(200).json({ success: true, message: "Order submitted successfully with screenshot", data: result.rows[0] });
+    res.status(200).json({ success: true, message: "Loan applied successfully. Waiting for admin approval.", data: result.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({ message: "Server error" });
@@ -505,12 +482,91 @@ const forwardOrderToSeller = async (req, res) => {
 // 👑 Approve Order (Admin)
 // ==========================================
 const approveOrder = async (req, res) => {
-  return updateApplicationStatus(req, res, {
-    allowedStatuses: ['order_submitted'],
-    nextStatus: 'order_approved',
-    successMessage: "Order approved successfully. Buyer can now submit a review.",
-    invalidMessage: "Application not found or order has not been submitted yet."
-  });
+  const client = await pool.connect();
+  try {
+    const applicationId = req.params.id;
+
+    await client.query('BEGIN');
+
+    const appResult = await client.query(
+      `SELECT a.id, a.user_id, a.status, a.order_total_amount,
+              p.product_name, p.store_name, p.platform, p.country
+       FROM applications a
+       JOIN products p ON a.product_id = p.id
+       WHERE a.id = $1
+       FOR UPDATE OF a`,
+      [applicationId]
+    );
+
+    if (appResult.rows.length === 0 || appResult.rows[0].status !== 'order_submitted') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: "Application not found or loan has not been applied yet." });
+    }
+
+    const app = appResult.rows[0];
+    const loanAmount = Number(app.order_total_amount || 0);
+    if (!Number.isFinite(loanAmount) || loanAmount <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: "Valid order total amount is required before loan approval." });
+    }
+
+    const userResult = await client.query(
+      "SELECT loan_credit_balance FROM users WHERE id = $1 FOR UPDATE",
+      [app.user_id]
+    );
+    const currentLoanCredit = Number(userResult.rows[0]?.loan_credit_balance || 0);
+    if (currentLoanCredit < loanAmount) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient buyer loan credit. Available: $${currentLoanCredit.toFixed(2)} USD.`,
+      });
+    }
+
+    await client.query(
+      `UPDATE users
+       SET loan_credit_balance = COALESCE(loan_credit_balance, 0) - $1,
+           wallet_balance = GREATEST(COALESCE(loan_credit_balance, 0) - $1, 0)
+       WHERE id = $2`,
+      [loanAmount.toFixed(2), app.user_id]
+    );
+
+    const spendLocation = [
+      app.store_name || app.product_name || `Application #${applicationId}`,
+      [app.platform, app.country].filter(Boolean).join(' ')
+    ].filter(Boolean).join(' - ');
+
+    await client.query(
+      `INSERT INTO transactions (user_id, amount, type, description, status, reference_id)
+       SELECT $1, $2, 'loan_credit_order', $3, 'completed', $4
+       WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE reference_id = $4)`,
+      [
+        app.user_id,
+        loanAmount.toFixed(2),
+        `Loan approved for ${spendLocation}. Order total: $${loanAmount.toFixed(2)}`,
+        `loan-credit-order:${applicationId}`,
+      ]
+    );
+
+    const result = await client.query(
+      "UPDATE applications SET status = 'order_approved' WHERE id = $1 RETURNING *",
+      [applicationId]
+    );
+
+    await client.query('COMMIT');
+    return res.status(200).json({
+      success: true,
+      message: "Loan approved successfully. Buyer transaction history has been updated.",
+      application: result.rows[0],
+      data: result.rows[0],
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error("LOAN APPROVAL ERROR:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    client.release();
+  }
 };
 
 // ==========================================
@@ -520,8 +576,8 @@ const rejectOrder = async (req, res) => {
   return updateApplicationStatus(req, res, {
     allowedStatuses: ['order_submitted'],
     nextStatus: 'rejected',
-    successMessage: "Order rejected successfully.",
-    invalidMessage: "Application not found or order has not been submitted yet."
+    successMessage: "Loan application rejected successfully.",
+    invalidMessage: "Application not found or loan has not been applied yet."
   });
 };
 
@@ -540,7 +596,7 @@ const submitReview = async (req, res) => {
 
     const appCheck = await pool.query("SELECT id, status FROM applications WHERE id = $1 AND user_id = $2", [applicationId, userId]);
     if (appCheck.rows.length === 0) return res.status(404).json({ message: "Application not found or unauthorized" });
-    if (appCheck.rows[0].status !== 'order_approved') return res.status(400).json({ message: "You can only submit a review after your order is approved by the admin" });
+    if (appCheck.rows[0].status !== 'order_approved') return res.status(400).json({ message: "You can only submit a review after your loan is approved by the admin" });
 
     const result = await pool.query(
       `UPDATE applications 

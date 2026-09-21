@@ -1936,7 +1936,15 @@ const getMyTransactions = async (req, res) => {
   try {
     const userId = req.user.id;
     const result = await pool.query(
-      "SELECT * FROM transactions WHERE user_id = $1 ORDER BY created_at DESC",
+      `SELECT t.*,
+              a.order_total_amount,
+              a.screenshot_url AS order_screenshot_url,
+              a.screenshot_url_2 AS order_extra_screenshot_url,
+              a.order_submitted_at AS loan_applied_at
+       FROM transactions t
+       LEFT JOIN applications a ON t.reference_id = CONCAT('loan-credit-order:', a.id)
+       WHERE t.user_id = $1
+       ORDER BY t.created_at DESC`,
       [userId]
     );
     res.status(200).json({ success: true, data: result.rows });
