@@ -7,7 +7,7 @@ const authorize = require("../middleware/roleMiddleware");
 
 const {
   applyToProduct, approveApplication, rejectApplication, deleteApplicationAdmin, 
-  getApplicationsByProduct, getMyApplications, submitOrder, forwardOrderToSeller, 
+  getApplicationsByProduct, getMyApplications, removeCartItem, submitOrder, forwardOrderToSeller,
   approveOrder, rejectOrder, submitReview, approveReview, rejectReview,        
   sellerApproveReview, submitSellerPaymentProof, confirmRefund, getSellerProductReviews, getAllApplicationsAdmin
 } = require("../controllers/applicationController");
@@ -38,6 +38,7 @@ const adminActionLimiter = rateLimit({
 // ==========================
 router.post("/apply", protect, authorize("buyer"), buyerActionLimiter, applyToProduct);
 router.get("/my", protect, authorize("buyer"), getMyApplications);
+router.delete("/:id/cart", protect, authorize("buyer"), buyerActionLimiter, removeCartItem);
 
 // ==========================
 // 👑 Admin Routes (Static First)

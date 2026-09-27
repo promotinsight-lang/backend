@@ -362,6 +362,29 @@ const getMyApplications = async (req, res) => {
   }
 };
 
+// =======================
+// 🛒 Remove Buyer Cart Item
+// =======================
+const removeCartItem = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM applications
+       WHERE id = $1 AND user_id = $2 AND status IN ('pending', 'approved')
+       RETURNING id`,
+      [req.params.id, req.user.id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Cart item not found or can no longer be removed." });
+    }
+
+    return res.status(200).json({ success: true, message: "Cart item removed successfully." });
+  } catch (error) {
+    console.error("REMOVE CART ITEM ERROR:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 // ==========================================
 // Buyer loan application with order total screenshot
 // ==========================================
@@ -978,7 +1001,7 @@ const getAllApplicationsAdmin = async (req, res) => {
 
 module.exports = {
   applyToProduct, approveApplication, rejectApplication, deleteApplicationAdmin, 
-  getApplicationsByProduct, getMyApplications, submitOrder, forwardOrderToSeller, 
+  getApplicationsByProduct, getMyApplications, removeCartItem, submitOrder, forwardOrderToSeller,
   approveOrder, rejectOrder, submitReview, approveReview, rejectReview,
   sellerApproveReview, submitSellerPaymentProof, confirmRefund, getSellerProductReviews, getAllApplicationsAdmin
 };
